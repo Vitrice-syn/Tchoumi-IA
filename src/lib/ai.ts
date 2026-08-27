@@ -63,22 +63,23 @@ export async function callGeminiStream(
   }
 
   // Clean and sanitize requested model name
-  let targetModel = modelName || "gemini-2.5-flash";
+  let targetModel = "gemini-2.5-flash";
   if (
-    targetModel.includes("3-flash-preview") ||
-    targetModel.includes("3.0")
+    modelName &&
+    !modelName.includes("2.0") &&
+    !modelName.includes("1.5") &&
+    !modelName.includes("2.5-pro") &&
+    !modelName.includes("3.0")
   ) {
-    targetModel = "gemini-2.5-flash";
+    targetModel = modelName;
   }
 
-  // Fallback models in priority order (starting with ultra-responsive, lightweight models)
+  // Fallback models in priority order (ultra-reliable, active and lightweight models)
   const fallbackModels = [
     targetModel,
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-2.5-pro",
+    "gemini-flash-latest",
   ].filter((m, i, arr) => arr.indexOf(m) === i);
 
   // Keep last 16 conversation messages to keep tokens lightweight, ultra-fast and prevent quota exhaustion (429)

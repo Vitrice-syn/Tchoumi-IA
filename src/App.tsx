@@ -122,6 +122,7 @@ export default function App() {
           !merged.selectedModel ||
           merged.selectedModel.includes('2.0') ||
           merged.selectedModel.includes('1.5') ||
+          merged.selectedModel.includes('2.5-pro') ||
           merged.selectedModel.includes('3-flash-preview') ||
           merged.selectedModel.includes('3.0')
         ) {
@@ -405,29 +406,106 @@ export default function App() {
         responseContent = await generateImage(content, settings.apiKeys.gemini);
         assistantMessage.content = responseContent;
       } else {
-        responseContent = await callGeminiStream(
-          updatedMessages, 
-          settings.apiKeys.gemini,
-          settings.selectedModel || 'gemini-2.5-flash',
-          (chunk) => {
-            // Update local state during streaming
-            if (user) {
-              setChats(prev => prev.map(c => 
-                c.id === currentChatId 
-                  ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: chunk }] } 
-                  : c
-              ));
-            } else {
-              setGuestChats(prev => prev.map(c => 
-                c.id === currentChatId 
-                  ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: chunk }] } 
-                  : c
-              ));
+        // First try server-side proxy /api/chat (works seamlessly on Render and backend hosting)
+        let handledByServer = false;
+        try {
+          const sseResponse = await fetch("/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messages: updatedMessages,
+              apiKey: settings.apiKeys.gemini,
+              model: settings.selectedModel || "gemini-2.5-flash",
+              customInstructions: settings.customInstructions,
+            }),
+            signal: abortControllerRef.current?.signal,
+          });
+
+          if (sseResponse.ok && sseResponse.body) {
+            const reader = sseResponse.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let accumulatedText = "";
+            let buffer = "";
+
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n\n");
+              buffer = lines.pop() || "";
+
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  const dataStr = line.slice(6).trim();
+                  if (dataStr === "[DONE]") break;
+                  try {
+                    const parsed = JSON.parse(dataStr);
+                    if (parsed.error) {
+                      throw new Error(parsed.error);
+                    }
+                    if (parsed.text) {
+                      accumulatedText += parsed.text;
+                      if (user) {
+                        setChats(prev => prev.map(c => 
+                          c.id === currentChatId 
+                            ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: accumulatedText }] } 
+                            : c
+                        ));
+                      } else {
+                        setGuestChats(prev => prev.map(c => 
+                          c.id === currentChatId 
+                            ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: accumulatedText }] } 
+                            : c
+                        ));
+                      }
+                    }
+                  } catch (e: any) {
+                    if (e.message && !e.message.includes("Unexpected token")) {
+                      throw e;
+                    }
+                  }
+                }
+              }
             }
-          },
-          abortControllerRef.current?.signal,
-          settings.customInstructions
-        );
+            if (accumulatedText.trim().length > 0) {
+              responseContent = accumulatedText;
+              handledByServer = true;
+            }
+          }
+        } catch (serverErr: any) {
+          if (serverErr.message === "Generation aborted" || abortControllerRef.current?.signal.aborted) {
+            throw new Error("Generation aborted");
+          }
+          console.warn("[Client] /api/chat server proxy fallback to client direct SDK:", serverErr);
+        }
+
+        if (!handledByServer) {
+          responseContent = await callGeminiStream(
+            updatedMessages, 
+            settings.apiKeys.gemini,
+            settings.selectedModel || 'gemini-2.5-flash',
+            (chunk) => {
+              // Update local state during streaming
+              if (user) {
+                setChats(prev => prev.map(c => 
+                  c.id === currentChatId 
+                    ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: chunk }] } 
+                    : c
+                ));
+              } else {
+                setGuestChats(prev => prev.map(c => 
+                  c.id === currentChatId 
+                    ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: chunk }] } 
+                    : c
+                ));
+              }
+            },
+            abortControllerRef.current?.signal,
+            settings.customInstructions
+          );
+        }
 
         // Check if Gemini suggested an image or returned an action
         if (responseContent.includes('"action"') && (responseContent.includes('dalle') || responseContent.includes('text2im') || responseContent.includes('image'))) {

@@ -65,21 +65,15 @@ app.post("/api/chat", async (req, res) => {
     });
   }
 
-  // Determine models list to try in order (primary, then robust active models)
-  let requestedModel = model || "gemini-2.5-flash";
-  if (
-    requestedModel.includes("2.0") ||
-    requestedModel.includes("1.5") ||
-    requestedModel.includes("3-flash-preview") ||
-    requestedModel.includes("3.0")
-  ) {
-    requestedModel = "gemini-2.5-flash";
-  }
+  // Active production models supported by Gemini API
+  const requestedModel = (model && !model.includes("2.0") && !model.includes("2.5") && !model.includes("1.5") && !model.includes("3.0")) 
+    ? model 
+    : "gemini-2.5-flash";
 
   const fallbackModels = [
     requestedModel,
     "gemini-2.5-flash",
-    "gemini-2.5-pro",
+    "gemini-2.5-flash-lite",
     "gemini-flash-latest",
   ].filter((m, i, arr) => arr.indexOf(m) === i); // deduplicate
 
