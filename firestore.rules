@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isFounder() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'ronysite4@gmail.com'
+      );
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isOwner(userId) || isFounder();
+      
+      // User's chats
+      match /chats/{chatId} {
+        allow read, write, delete: if isOwner(userId);
+      }
+    }
+
+    // Pro users registry (verified by email)
+    match /pro_users/{email} {
+      allow read: if true;
+      allow create, update, delete: if isFounder();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

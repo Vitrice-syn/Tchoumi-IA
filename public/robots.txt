@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://tchoumi-ia.com/sitemap.xml
