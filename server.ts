@@ -68,13 +68,12 @@ app.post("/api/chat", async (req, res) => {
   // Active production models supported by Gemini API
   const requestedModel = (model && !model.includes("2.0") && !model.includes("2.5") && !model.includes("1.5") && !model.includes("3.0")) 
     ? model 
-    : "gemini-2.5-flash";
+    : "gemini-3.7-flash";
 
   const fallbackModels = [
     requestedModel,
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-flash-latest",
+    "gemini-3.7-flash",
+    "gemini-3.1-flash-lite",
   ].filter((m, i, arr) => arr.indexOf(m) === i); // deduplicate
 
   // Prepare Gemini contents payload

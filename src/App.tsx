@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS: AppSettings = {
             (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : '') || '',
   },
   selectedProvider: 'gemini',
-  selectedModel: 'gemini-2.5-flash',
+  selectedModel: 'gemini-3.7-flash',
   language: 'en',
   customInstructions: '',
   responseStyle: 'scientific',
@@ -122,11 +122,11 @@ export default function App() {
           !merged.selectedModel ||
           merged.selectedModel.includes('2.0') ||
           merged.selectedModel.includes('1.5') ||
-          merged.selectedModel.includes('2.5-pro') ||
+          merged.selectedModel.includes('2.5') ||
           merged.selectedModel.includes('3-flash-preview') ||
           merged.selectedModel.includes('3.0')
         ) {
-          merged.selectedModel = 'gemini-2.5-flash';
+          merged.selectedModel = 'gemini-3.7-flash';
         }
         return merged;
       } catch (e) {
@@ -417,7 +417,7 @@ export default function App() {
             body: JSON.stringify({
               messages: updatedMessages,
               apiKey: settings.apiKeys.gemini,
-              model: settings.selectedModel || "gemini-2.5-flash",
+              model: settings.selectedModel || "gemini-3.7-flash",
               customInstructions: settings.customInstructions,
             }),
             signal: abortControllerRef.current?.signal,
@@ -485,7 +485,7 @@ export default function App() {
           responseContent = await callGeminiStream(
             updatedMessages, 
             settings.apiKeys.gemini,
-            settings.selectedModel || 'gemini-2.5-flash',
+            settings.selectedModel || 'gemini-3.7-flash',
             (chunk) => {
               // Update local state during streaming
               if (user) {
@@ -574,7 +574,7 @@ export default function App() {
       const responseContent = await callGeminiStream(
         activeChat.messages,
         settings.apiKeys.gemini || '',
-        settings.selectedModel || 'gemini-2.5-flash',
+        settings.selectedModel || 'gemini-3.7-flash',
         (chunk) => {
           const updatedMessages = activeChat.messages.map((m, idx) => 
             idx === activeChat.messages.length - 1 
