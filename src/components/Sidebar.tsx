@@ -1,9 +1,23 @@
 import React from 'react';
-import { Plus, MessageSquare, Settings, Trash2, User as UserIcon, Cpu, LogOut, X, Sparkles, Crown } from 'lucide-react';
-import { Chat, User, UserPlan } from '../types';
-import { AI_NAME, AI_AVATAR_URL } from '../constants';
+import {
+  Search,
+  PanelLeftClose,
+  SquarePen,
+  Image as ImageIcon,
+  BarChart3,
+  Brain,
+  SlidersHorizontal,
+  LayoutGrid,
+  ListFilter,
+  Trash2,
+  Settings,
+  LogOut,
+  X,
+  User as UserIcon,
+} from 'lucide-react';
+import { Chat, User, UserPlan, Language } from '../types';
+import { AI_NAME } from '../constants';
 import { translations } from '../lib/translations';
-import { Language } from '../types';
 import { cn } from '../lib/utils';
 import { logout } from '../firebase';
 
@@ -17,9 +31,29 @@ interface SidebarProps {
   onSelectChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
   onOpenSettings: (category?: string) => void;
+  onQuickImageMode?: () => void;
   onLogin?: () => void;
   onClose?: () => void;
 }
+
+const SidebarStarIcon: React.FC = () => {
+  const gradId = React.useId();
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="w-6 h-6 shrink-0">
+      <defs>
+        <linearGradient id={gradId} x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#60a5fa" />
+          <stop offset="50%" stopColor="#818cf8" />
+          <stop offset="100%" stopColor="#34d399" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M12 2C12.35 7.45 16.55 11.65 22 12C16.55 12.35 12.35 16.55 12 22C11.65 16.55 7.45 12.35 2 12C7.45 11.65 11.65 7.45 12 2Z"
+        fill={`url(#${gradId})`}
+      />
+    </svg>
+  );
+};
 
 export const Sidebar: React.FC<SidebarProps> = ({
   chats,
@@ -31,13 +65,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectChat,
   onDeleteChat,
   onOpenSettings,
+  onQuickImageMode,
   onLogin,
   onClose,
 }) => {
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = React.useState(false);
+  const [isSearchOpen, setIsSearchOpen] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [filterMediaOnly, setFilterMediaOnly] = React.useState(false);
   const longPressTimer = React.useRef<NodeJS.Timeout | null>(null);
+  const searchInputRef = React.useRef<HTMLInputElement | null>(null);
   const t = translations[language].sidebar;
+
+  React.useEffect(() => {
+    if (isSearchOpen) {
+      setTimeout(() => searchInputRef.current?.focus(), 40);
+    }
+  }, [isSearchOpen]);
 
   const handleTouchStart = (id: string) => {
     longPressTimer.current = setTimeout(() => {
@@ -54,8 +99,100 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const filteredChats = React.useMemo(() => {
+    return chats.filter((chat) => {
+      if (filterMediaOnly) {
+        const hasMedia = chat.messages.some(
+          (m) =>
+            (m.attachments && m.attachments.length > 0) ||
+            m.content.includes('pollinations.ai') ||
+            m.content.includes('![')
+        );
+        if (!hasMedia) return false;
+      }
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const titleMatch = (chat.title || '').toLowerCase().includes(q);
+        const msgMatch = chat.messages.some((m) =>
+          (m.content || '').toLowerCase().includes(q)
+        );
+        return titleMatch || msgMatch;
+      }
+
+      return true;
+    });
+  }, [chats, filterMediaOnly, searchQuery]);
+
+  const userInitial = React.useMemo(() => {
+    if (!user) return 'T';
+    const label = user.displayName || user.email || 'T';
+    return label.trim().charAt(0).toUpperCase();
+  }, [user]);
+
+  const navItems = [
+    {
+      id: 'new-chat',
+      label: language === 'en' ? 'New chat' : 'Nouvelle discussion',
+      icon: SquarePen,
+      onClick: () => {
+        onNewChat();
+        if (window.innerWidth < 768) onClose?.();
+      },
+    },
+    {
+      id: 'images',
+      label: 'Images',
+      icon: ImageIcon,
+      onClick: () => {
+        if (onQuickImageMode) {
+          onQuickImageMode();
+        } else {
+          onNewChat();
+        }
+        if (window.innerWidth < 768) onClose?.();
+      },
+    },
+    {
+      id: 'analytics',
+      label: language === 'en' ? 'Data Analytics' : 'Analyse de données',
+      icon: BarChart3,
+      onClick: () => {
+        onOpenSettings('analytics');
+        if (window.innerWidth < 768) onClose?.();
+      },
+    },
+    {
+      id: 'medical',
+      label: language === 'en' ? 'Brain MRI' : 'IRM & Neuro-imagerie',
+      icon: Brain,
+      onClick: () => {
+        onOpenSettings('medical');
+        if (window.innerWidth < 768) onClose?.();
+      },
+    },
+    {
+      id: 'personalize',
+      label: language === 'en' ? 'Customize' : 'Personnaliser',
+      icon: SlidersHorizontal,
+      onClick: () => {
+        onOpenSettings('personalization');
+        if (window.innerWidth < 768) onClose?.();
+      },
+    },
+    {
+      id: 'apps',
+      label: language === 'en' ? 'Apps' : 'Applications',
+      icon: LayoutGrid,
+      onClick: () => {
+        onOpenSettings('apps');
+        if (window.innerWidth < 768) onClose?.();
+      },
+    },
+  ];
+
   return (
-    <div className="flex flex-col h-full bg-[#070709] text-white w-64 border-r border-white/10 relative">
+    <div className="flex flex-col h-full bg-[#131418] text-white w-64 sm:w-[272px] border-r border-white/[0.06] relative select-none">
       {/* Delete Confirmation Overlay */}
       {deletingId && (
         <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 text-center">
@@ -120,199 +257,230 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* Branding Section */}
-      <div className="p-4 flex items-center justify-between border-b border-white/5 bg-[#070709]">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-600/20 ring-1 ring-white/10 overflow-hidden shrink-0">
-            <img 
-              src={AI_AVATAR_URL} 
-              alt="Logo" 
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.style.display = 'none';
-                if (target.parentElement) {
-                  target.parentElement.innerHTML = `<div class="w-full h-full flex items-center justify-center bg-indigo-600 text-white font-bold text-xs">T</div>`;
-                }
-              }}
-            />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-bold tracking-tight">{AI_NAME}</span>
-            <span className="text-[9px] text-indigo-400 font-bold uppercase tracking-[0.2em]">{t.byVitronix}</span>
-          </div>
+      {/* Top Gemini-style Header */}
+      <div className="px-4 pt-3.5 pb-2.5 flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <SidebarStarIcon />
+          <span className="text-[17px] font-semibold tracking-tight text-white whitespace-nowrap truncate">
+            {AI_NAME}
+          </span>
         </div>
-        {onClose && (
-          <button 
-            onClick={onClose}
-            className="p-2 hover:bg-white/5 rounded-lg text-gray-400 md:hidden transition-colors"
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchOpen((prev) => {
+                if (prev) setSearchQuery('');
+                return !prev;
+              });
+            }}
+            className={cn(
+              "p-2 rounded-full transition-colors cursor-pointer",
+              isSearchOpen
+                ? "bg-white/10 text-white"
+                : "text-gray-400 hover:text-white hover:bg-white/[0.07]"
+            )}
+            title={language === 'en' ? 'Search chats' : 'Rechercher une discussion'}
+            aria-label={language === 'en' ? 'Search chats' : 'Rechercher une discussion'}
           >
-            <X size={20} />
+            <Search size={17} />
           </button>
-        )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-white/[0.07] transition-colors cursor-pointer"
+              title={language === 'en' ? 'Collapse sidebar' : 'Réduire le menu'}
+              aria-label={language === 'en' ? 'Collapse sidebar' : 'Réduire le menu'}
+            >
+              <PanelLeftClose size={17} />
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="p-3">
+      {/* Collapsible Search Input */}
+      {isSearchOpen && (
+        <div className="px-3 pb-2 shrink-0">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.06] border border-white/10 focus-within:border-indigo-400/50">
+            <Search size={13} className="text-gray-400 shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={language === 'en' ? 'Search...' : 'Rechercher...'}
+              className="w-full bg-transparent text-xs text-white placeholder-gray-400 outline-none"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-gray-400 hover:text-white cursor-pointer"
+                aria-label="Clear search"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Clean Gemini-style Action Navigation */}
+      <nav className="px-2.5 py-1 space-y-0.5 shrink-0">
+        {navItems.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={item.onClick}
+            className="w-full flex items-center gap-3.5 px-3 py-2.5 rounded-full text-[13.5px] font-medium text-gray-200 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer text-left"
+          >
+            <item.icon size={17} className="text-gray-300 shrink-0" strokeWidth={1.8} />
+            <span className="truncate">{item.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      {/* Section Header + Filter */}
+      <div className="px-4 pt-4 pb-1.5 flex items-center justify-between shrink-0">
+        <span className="text-xs font-medium text-gray-400">
+          {filterMediaOnly
+            ? (language === 'en' ? 'With media' : 'Avec médias')
+            : (language === 'en' ? 'All' : 'Toutes')}
+        </span>
         <button
-          onClick={onNewChat}
-          className="flex items-center gap-3 w-full p-3 border border-white/15 bg-white/[0.02] rounded-xl hover:bg-white/5 transition-all text-sm font-medium shadow-sm active:scale-[0.98] hover:border-indigo-500/30 cursor-pointer"
+          type="button"
+          onClick={() => setFilterMediaOnly((prev) => !prev)}
+          className={cn(
+            "p-1.5 rounded-full transition-colors cursor-pointer",
+            filterMediaOnly
+              ? "bg-indigo-500/20 text-indigo-300"
+              : "text-gray-400 hover:text-white hover:bg-white/[0.07]"
+          )}
+          title={
+            filterMediaOnly
+              ? (language === 'en' ? 'Show all chats' : 'Afficher toutes les discussions')
+              : (language === 'en' ? 'Filter chats with media' : 'Filtrer les discussions avec médias')
+          }
+          aria-label="Filter chats"
         >
-          <Plus size={16} className="text-indigo-400" />
-          {t.newChat}
+          <ListFilter size={15} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1 scrollbar-thin scrollbar-thumb-white/10">
-        {chats.length === 0 ? (
-          <div className="text-xs text-gray-500 text-center mt-8 px-4 leading-relaxed">
-            {t.historyEmpty}
+      {/* Scrollable Conversations List */}
+      <div className="flex-1 overflow-y-auto px-2.5 py-1 space-y-0.5 scrollbar-thin scrollbar-thumb-white/10">
+        {filteredChats.length === 0 ? (
+          <div className="text-xs text-gray-500 text-center mt-6 px-4 leading-relaxed">
+            {searchQuery || filterMediaOnly
+              ? (language === 'en' ? 'No matching chats.' : 'Aucune discussion trouvée.')
+              : t.historyEmpty}
           </div>
         ) : (
-          chats.map((chat) => (
+          filteredChats.map((chat) => (
             <div
               key={chat.id}
               className={cn(
-                "group flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all text-sm relative select-none",
-                activeChatId === chat.id 
-                  ? "bg-[#14151c] text-white border border-indigo-500/20 font-medium pr-10 shadow-sm" 
-                  : "text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]"
+                "group flex items-center justify-between gap-2 px-3.5 py-2 rounded-full cursor-pointer transition-colors text-[13.5px] relative",
+                activeChatId === chat.id
+                  ? "bg-[#22252f] text-white font-medium"
+                  : "text-gray-300 hover:text-white hover:bg-white/[0.05]"
               )}
               onClick={() => onSelectChat(chat.id)}
               onTouchStart={() => handleTouchStart(chat.id)}
               onTouchEnd={handleTouchEnd}
               onTouchMove={handleTouchEnd}
             >
-              <MessageSquare size={16} className={cn("shrink-0", activeChatId === chat.id ? "text-indigo-400" : "text-gray-500")} />
               <span className="flex-1 truncate">{chat.title || t.newChat}</span>
-              
-              <div className={cn(
-                "absolute right-2 flex items-center gap-1 transition-opacity",
-                activeChatId === chat.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-              )}>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeletingId(chat.id);
-                  }}
-                  className="p-1 hover:text-red-400 transition-colors"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDeletingId(chat.id);
+                }}
+                className={cn(
+                  "p-1 rounded-full hover:text-red-400 transition-opacity shrink-0 cursor-pointer",
+                  activeChatId === chat.id ? "opacity-75 hover:opacity-100" : "opacity-0 group-hover:opacity-100"
+                )}
+                title={t.deleteConfirm}
+                aria-label={t.deleteConfirm}
+              >
+                <Trash2 size={13} />
+              </button>
             </div>
           ))
         )}
       </div>
 
-      <div className="p-3 border-t border-white/10 space-y-1 bg-[#070709]">
+      {/* Bottom Account & Settings Bar */}
+      <div className="px-3 py-2.5 border-t border-white/[0.06] flex items-center justify-between gap-1.5 shrink-0 bg-[#131418]">
         <button
+          type="button"
           onClick={() => {
-            onOpenSettings();
+            if (user) {
+              onOpenSettings('account');
+            } else if (onLogin) {
+              onLogin();
+            } else {
+              onOpenSettings('account');
+            }
             if (window.innerWidth < 768) onClose?.();
           }}
-          className="flex items-center gap-3 w-full p-3 rounded-xl hover:bg-white/[0.04] transition-colors text-sm text-gray-300 hover:text-white cursor-pointer"
+          className="flex items-center gap-2.5 min-w-0 flex-1 p-1.5 rounded-full hover:bg-white/[0.06] transition-colors text-left cursor-pointer"
         >
-          <Settings size={16} className="text-gray-400" />
-          {t.settings}
+          <div className="w-8 h-8 rounded-full overflow-hidden bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shrink-0">
+            {user?.photoURL ? (
+              <img
+                src={user.photoURL}
+                alt="User"
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            ) : user ? (
+              <span>{userInitial}</span>
+            ) : (
+              <UserIcon size={15} />
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <span className="truncate text-[13.5px] font-medium text-gray-100">
+              {user ? (user.displayName || user.email?.split('@')[0]) : t.signIn}
+            </span>
+            {plan === 'pro' && (
+              <span className="text-[10px] font-semibold text-amber-400 shrink-0">
+                {t.proBadge}
+              </span>
+            )}
+          </div>
         </button>
 
-        {user ? (
-          <div className="flex items-center justify-between gap-2 w-full p-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors text-sm group">
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <div className="w-8 h-8 rounded-lg overflow-hidden bg-indigo-600 flex items-center justify-center text-white ring-1 ring-white/10 shrink-0">
-                {user.photoURL ? (
-                  <img src={user.photoURL} alt="User" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <UserIcon size={15} />
-                )}
-              </div>
-              <div className="flex flex-col min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="truncate font-medium text-xs text-white leading-tight">{user.displayName || user.email?.split('@')[0]}</span>
-                </div>
-                <div className="flex items-center justify-between gap-1 mt-0.5">
-                  <span className="text-[10px] text-gray-500 truncate">{user.email}</span>
-                </div>
-              </div>
-              
-              {/* Badge Plan Free / Pro */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenSettings('account');
-                  if (window.innerWidth < 768) onClose?.();
-                }}
-                className={cn(
-                  "px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 tracking-wider uppercase transition-all shadow-sm flex items-center gap-1 cursor-pointer",
-                  plan === 'pro'
-                    ? "bg-gradient-to-r from-amber-400 to-amber-500 text-black border border-amber-300 shadow-amber-500/25 font-black"
-                    : "bg-white/10 text-gray-300 hover:bg-indigo-600 hover:text-white border border-white/10 hover:border-indigo-500"
-                )}
-                title={plan === 'pro' ? t.proActive : t.freeAction}
-              >
-                {plan === 'pro' ? (
-                  <>
-                    <Crown size={10} className="text-black fill-black" />
-                    <span>{t.proBadge}</span>
-                  </>
-                ) : (
-                  <span>{t.freeBadge}</span>
-                )}
-              </button>
-            </div>
-            <button 
+        <div className="flex items-center gap-0.5 shrink-0">
+          {user && (
+            <button
+              type="button"
               onClick={() => setShowLogoutConfirm(true)}
-              className="p-1.5 hover:bg-white/10 rounded-md text-gray-400 hover:text-red-400 transition-all opacity-70 group-hover:opacity-100 shrink-0 cursor-pointer"
+              className="p-2 rounded-full text-gray-400 hover:text-red-400 hover:bg-white/[0.07] transition-colors cursor-pointer"
               title={t.logoutBtn}
+              aria-label={t.logoutBtn}
             >
-              <LogOut size={13} />
+              <LogOut size={16} />
             </button>
-          </div>
-        ) : (
-          /* Non connecté / Mode Invité */
-          <div className="flex items-center justify-between gap-2 w-full p-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors text-sm group">
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <div className="w-8 h-8 rounded-lg overflow-hidden bg-white/10 flex items-center justify-center text-gray-400 ring-1 ring-white/10 shrink-0">
-                <UserIcon size={15} />
-              </div>
-              <div className="flex flex-col min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="truncate font-medium text-xs text-white leading-tight">{t.guestMode}</span>
-                </div>
-                {onLogin ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onLogin();
-                      if (window.innerWidth < 768) onClose?.();
-                    }}
-                    className="text-[10px] text-indigo-400 hover:text-indigo-300 hover:underline text-left truncate mt-0.5 cursor-pointer"
-                  >
-                    {t.signIn}
-                  </button>
-                ) : (
-                  <span className="text-[10px] text-gray-500 truncate">{t.notConnected}</span>
-                )}
-              </div>
-              
-              {/* Badge Plan Free pour invité */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenSettings('account');
-                  if (window.innerWidth < 768) onClose?.();
-                }}
-                className="px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 tracking-wider uppercase transition-all shadow-sm flex items-center gap-1 bg-white/10 text-gray-300 hover:bg-indigo-600 hover:text-white border border-white/10 hover:border-indigo-500 cursor-pointer"
-                title={t.freeAction}
-              >
-                <span>{t.freeBadge}</span>
-              </button>
-            </div>
-          </div>
-        )}
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              onOpenSettings();
+              if (window.innerWidth < 768) onClose?.();
+            }}
+            className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-white/[0.07] transition-colors cursor-pointer"
+            title={t.settings}
+            aria-label={t.settings}
+          >
+            <Settings size={17} />
+          </button>
+        </div>
       </div>
     </div>
   );
 };
-

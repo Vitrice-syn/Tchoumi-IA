@@ -8,7 +8,7 @@ import {
   AudioLines, ArrowUp, ChevronLeft, Square, Play, Atom,
   Table as TableIcon, Volume2, Sparkle, BarChart3, Activity,
   Brain, Link2, CheckCircle2, Sliders, ExternalLink, Radio,
-  Layers, Key, Eye, EyeOff, RefreshCw, FileSpreadsheet, Mail, MessageSquare,
+  Layers, Eye, EyeOff, RefreshCw, FileSpreadsheet, Mail, MessageSquare,
   Crown, Zap, ShieldCheck, Star, CreditCard
 } from 'lucide-react';
 import { Message, AppSettings, ModelProvider, Attachment, ConnectedApp } from '../types';
@@ -43,6 +43,7 @@ interface ChatAreaProps {
   onContinueGeneration?: () => void;
   onEditMessage?: (id: string, newContent: string) => void;
   onRetry?: (messageId?: string) => void;
+  onOpenLiveVoice?: () => void;
   wasInterrupted?: boolean;
 }
 
@@ -69,6 +70,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onContinueGeneration,
   onEditMessage,
   onRetry,
+  onOpenLiveVoice,
   wasInterrupted = false,
 }) => {
   const [input, setInput] = useState('');
@@ -464,35 +466,50 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#000000] relative overflow-hidden">
+    <div className="flex flex-col h-full bg-[#0e0f13] relative overflow-hidden">
       {/* Header */}
-      <div className="shrink-0 z-30 flex items-center justify-between p-3 bg-black/90 backdrop-blur-md border-b border-white/10">
+      <div className="shrink-0 z-30 flex items-center justify-between px-3 sm:px-5 py-2.5 bg-[#0e0f13]/90 backdrop-blur-md border-b border-white/[0.05]">
         <div className="flex items-center gap-2 text-sm font-medium text-gray-200">
-          {/* Mobile Toggle */}
+          {/* Sidebar Toggle (shown on mobile, or on desktop when collapsed) */}
           {onToggleSidebar && (
             <button
               onClick={onToggleSidebar}
-              className="p-2 mr-1 hover:bg-white/5 rounded-lg text-gray-400 md:hidden transition-colors"
+              className={cn(
+                "p-2 hover:bg-white/[0.07] rounded-full text-gray-400 hover:text-white transition-colors cursor-pointer",
+                isSidebarOpen ? "md:hidden" : "flex"
+              )}
+              title={settings.language === 'en' ? 'Open sidebar' : 'Ouvrir le menu'}
+              aria-label={settings.language === 'en' ? 'Open sidebar' : 'Ouvrir le menu'}
             >
-              {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+              {isSidebarOpen ? <X size={19} /> : <Menu size={19} />}
             </button>
           )}
 
-          <div className="px-3 py-1.5 bg-white/[0.04] rounded-xl flex items-center gap-2 border border-white/10 text-white font-semibold">
-            <Cpu size={14} className="text-indigo-400" />
-            {AI_NAME}
+          <div className="px-2 py-1 flex items-center gap-2 text-white font-semibold text-[15px] tracking-tight">
+            <span>{AI_NAME}</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {!isLoggedIn && onLogin && (
             <button
               onClick={onLogin}
-              className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-95"
+              className="flex items-center gap-2 px-3.5 py-1.5 bg-[#1a3d70] hover:bg-[#1f4987] text-white text-xs font-semibold rounded-full transition-colors cursor-pointer"
             >
               <div className="w-4 h-4 bg-white rounded-full flex items-center justify-center p-0.5">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-full h-full" />
               </div>
               <span className="hidden sm:inline">{settings.language === 'en' ? "Sign In" : "Se connecter"}</span>
+            </button>
+          )}
+          {onOpenLiveVoice && (
+            <button
+              type="button"
+              onClick={onOpenLiveVoice}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#181a21] hover:bg-[#22252f] border border-white/[0.08] text-gray-200 hover:text-white text-xs font-medium transition-colors cursor-pointer"
+              title={settings.language === 'en' ? "Live Voice Conversation" : "Discussion vocale en direct"}
+            >
+              <AudioLines size={15} className="text-sky-400" />
+              <span className="hidden sm:inline">{settings.language === 'en' ? "Voice" : "Vocal"}</span>
             </button>
           )}
           <button 
@@ -506,8 +523,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               }
             }}
             className={cn(
-              "p-2 rounded-xl transition-all cursor-pointer flex items-center justify-center",
-              activeView === 'settings' && settingsCategory === 'account' ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30" : "hover:bg-white/5 text-gray-400 hover:text-white"
+              "p-2 rounded-full transition-colors cursor-pointer flex items-center justify-center",
+              activeView === 'settings' && settingsCategory === 'account' ? "bg-indigo-600 text-white" : "hover:bg-white/[0.07] text-gray-400 hover:text-white"
             )}
             title={settings.language === 'en' ? "Account & Plan" : "Compte & Formule"}
           >
@@ -517,10 +534,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       </div>
 
       {activeView === 'settings' ? (
-        <div className="flex-1 flex bg-[#070709] overflow-hidden relative">
+        <div className="flex-1 flex bg-[#0e0f13] overflow-hidden relative">
           {/* Settings Sidebar */}
           <div className={cn(
-            "w-full md:w-64 border-r border-white/10 bg-[#070709] flex flex-col h-full overflow-hidden transition-all duration-300",
+            "w-full md:w-64 border-r border-white/[0.06] bg-[#131418] flex flex-col h-full overflow-hidden transition-all duration-300",
             showMobileDetail ? "hidden md:flex" : "flex"
           )}>
             {/* Header */}
@@ -568,7 +585,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </div>
 
             {/* Plan Card at Bottom of Settings Sidebar */}
-            <div className="p-3 border-t border-white/10 shrink-0 bg-[#090a10]">
+            <div className="p-3 border-t border-white/[0.06] shrink-0 bg-[#131418]">
               <div 
                 onClick={() => {
                   setSettingsCategory('account');
@@ -603,7 +620,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
           {/* Settings Content */}
           <div className={cn(
-            "flex-1 overflow-y-auto bg-[#070709] transition-all duration-300",
+            "flex-1 overflow-y-auto bg-[#0e0f13] transition-all duration-300",
             showMobileDetail ? "block" : "hidden md:block"
           )}>
             <div className="max-w-3xl mx-auto p-4 sm:p-8 space-y-8">
@@ -1468,31 +1485,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 </div>
               )}
 
-              {/* 6. SÉCURITÉ & CLÉS API */}
+              {/* 6. SÉCURITÉ & INFRASTRUCTURE IA */}
               {settingsCategory === 'security' && (
                 <div className="space-y-6">
-                  <div className="p-5 bg-[#0c0d12] rounded-2xl border border-white/10 space-y-4">
+                  <div className="p-5 bg-[#0c0d12] rounded-2xl border border-white/10 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
-                        <Key size={20} />
+                      <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                        <ShieldCheck size={20} />
                       </div>
                       <div>
                         <h4 className="text-white font-medium text-sm">{tSettings.security.geminiApiKeyTitle}</h4>
                         <p className="text-xs text-gray-400">{tSettings.security.geminiApiKeyDesc}</p>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <input 
-                        type="password"
-                        value={settings.apiKeys.gemini || ''}
-                        onChange={(e) => onUpdateSettings({
-                          ...settings,
-                          apiKeys: { ...settings.apiKeys, gemini: e.target.value }
-                        })}
-                        placeholder="AIzaSy..."
-                        className="flex-1 bg-[#13141c] border border-white/10 rounded-xl px-4 py-2 text-white text-sm outline-none focus:border-indigo-500 font-mono"
-                      />
-                    </div>
+                    <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold shrink-0">
+                      {tSettings.general.optimizedBadge}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between p-4 bg-[#0c0d12] rounded-2xl border border-white/10">
@@ -1829,57 +1837,60 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           {/* Messages */}
           <div className="flex-1 min-w-0 w-full overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
         {messages.length === 0 ? (
-          <div className="min-h-full flex flex-col items-center justify-center text-center px-4 py-6 sm:py-8 space-y-5 sm:space-y-6">
+          <div className="min-h-full flex flex-col items-center justify-center text-center px-4 py-8 sm:py-12 max-w-3xl mx-auto w-full">
             <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
+              initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden bg-indigo-600 flex items-center justify-center text-white shadow-2xl shadow-indigo-500/20 ring-4 ring-white/5"
+              transition={{ duration: 0.25 }}
+              className="mb-4"
             >
-              <img 
-                src={AI_AVATAR_URL} 
-                alt="AI Logo" 
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="w-11 h-11 mx-auto">
+                <defs>
+                  <linearGradient id="welcomeStarGrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stopColor="#60a5fa" />
+                    <stop offset="50%" stopColor="#818cf8" />
+                    <stop offset="100%" stopColor="#34d399" />
+                  </linearGradient>
+                </defs>
+                <path
+                  d="M12 2C12.35 7.45 16.55 11.65 22 12C16.55 12.35 12.35 16.55 12 22C11.65 16.55 7.45 12.35 2 12C7.45 11.65 11.65 7.45 12 2Z"
+                  fill="url(#welcomeStarGrad)"
+                />
+              </svg>
             </motion.div>
-            <div className="space-y-2.5">
-              <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">{AI_NAME} v3.0</h1>
-              <p className="text-gray-400 max-w-lg mx-auto text-sm sm:text-base leading-relaxed px-4">
-                {settings.language === 'en' 
-                  ? "Next-Generation African Artificial Intelligence. Created by Tchoumi Chilic Vitrice." 
-                  : "L'Intelligence Artificielle Africaine de Nouvelle Génération. Créée par Tchoumi Chilic Vitrice."}
+
+            <div className="space-y-2.5 max-w-xl mx-auto mb-8">
+              <p className="text-xs font-medium tracking-wide text-indigo-300/90">
+                {AI_NAME}
               </p>
-              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                  <BarChart3 size={12} /> {t.quickBadges.analytics}
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <Atom size={12} /> {t.quickBadges.coding}
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                  <ImageIcon size={12} /> {t.quickBadges.vision}
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  <Volume2 size={12} /> {settings.language === 'en' ? 'Voice Synthesis' : 'Synthèse vocale'}
-                </span>
-              </div>
+              <h1 className="text-2xl sm:text-4xl font-semibold text-white tracking-tight text-balance">
+                {settings.language === 'en'
+                  ? "How can I help you today?"
+                  : "Comment puis-je vous aider aujourd'hui ?"}
+              </h1>
+              <p className="text-gray-400 text-xs sm:text-sm leading-relaxed">
+                {settings.language === 'en'
+                  ? "Next-Generation African AI · Created by Tchoumi Chilic Vitrice"
+                  : "Intelligence Artificielle Africaine · Créée par Tchoumi Chilic Vitrice"}
+              </p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl w-full mt-3 sm:mt-4 px-2 sm:px-4">
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl w-full">
               {t.suggestions.map((suggestion, i) => (
                 <button
                   key={i}
                   onClick={() => onSendMessage(`${suggestion.title} ${suggestion.desc}`)}
-                  className="p-3.5 sm:p-4 bg-[#08080c] border border-white/10 rounded-2xl text-left hover:bg-white/[0.04] transition-all hover:border-indigo-500/40 group flex flex-col justify-between min-h-[90px] hover:shadow-lg hover:shadow-indigo-500/5"
+                  className="p-4 bg-[#16181f] hover:bg-[#1e212b] border border-white/[0.07] hover:border-white/[0.15] rounded-2xl text-left transition-colors group flex flex-col justify-between min-h-[92px] cursor-pointer"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-white group-hover:text-indigo-400 transition-colors flex items-center gap-2">
-                      {i === 0 && <BarChart3 size={15} className="text-indigo-400" />}
-                      {i === 1 && <Activity size={15} className="text-emerald-400" />}
-                      {i === 2 && <Atom size={15} className="text-blue-400" />}
-                      {i === 3 && <ImageIcon size={15} className="text-purple-400" />}
-                      {suggestion.title}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium text-gray-100 group-hover:text-white transition-colors flex items-center gap-2.5">
+                      {i === 0 && <BarChart3 size={16} className="text-blue-400 shrink-0" />}
+                      {i === 1 && <Activity size={16} className="text-emerald-400 shrink-0" />}
+                      {i === 2 && <Atom size={16} className="text-indigo-400 shrink-0" />}
+                      {i === 3 && <ImageIcon size={16} className="text-sky-400 shrink-0" />}
+                      <span>{suggestion.title}</span>
                     </div>
-                    <ChevronRight size={14} className="text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <ChevronRight size={14} className="text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                   </div>
                   <div className="text-xs text-gray-400 mt-1.5 line-clamp-2 leading-relaxed">{suggestion.desc}</div>
                 </button>
@@ -1887,25 +1898,42 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </div>
           </div>
         ) : (
-          <div className="pb-8 w-full min-w-0">
-            {messages.map((msg) => (
+          <div className="max-w-3xl mx-auto w-full px-3 sm:px-6 pt-4 pb-10 space-y-6 min-w-0">
+            {messages.map((msg, idx) => (
               <MessageItem 
                 key={msg.id} 
                 message={msg} 
                 userPhotoURL={userPhotoURL}
                 onEdit={onEditMessage}
                 onRetry={onRetry}
+                isStreaming={isLoading && idx === messages.length - 1 && msg.role === 'assistant'}
+                language={settings.language}
               />
             ))}
-            {isLoading && (
-              <div className="py-8 px-4 sm:px-6 md:px-8 lg:px-12 flex gap-4 sm:gap-6 bg-[#090a0f] border-b border-white/[0.04]">
-                <div className="shrink-0 pt-1">
-                  <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-600/20 ring-1 ring-white/10">
-                    <Loader2 size={18} className="animate-spin" />
-                  </div>
+            {isLoading && (messages.length === 0 || messages[messages.length - 1].role !== 'assistant') && (
+              <div className="w-full space-y-3 py-1">
+                <div className="flex items-center gap-2.5">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="w-5 h-5 shrink-0 gemini-star-active">
+                    <defs>
+                      <linearGradient id="geminiLoadingGrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                        <stop offset="0%" stopColor="#60a5fa" />
+                        <stop offset="55%" stopColor="#818cf8" />
+                        <stop offset="100%" stopColor="#38bdf8" />
+                      </linearGradient>
+                    </defs>
+                    <path
+                      d="M12 2C12.35 7.45 16.55 11.65 22 12C16.55 12.35 12.35 16.55 12 22C11.65 16.55 7.45 12.35 2 12C7.45 11.65 11.65 7.45 12 2Z"
+                      fill="url(#geminiLoadingGrad)"
+                    />
+                  </svg>
+                  <span className="text-xs sm:text-[13px] font-medium text-gray-300 tracking-wide">
+                    Tchoumi IA réfléchit...
+                  </span>
                 </div>
-                <div className="flex-1 flex items-center gap-2 text-indigo-300 italic text-sm">
-                  {AI_NAME} {t.thinking}
+                <div className="pl-7 space-y-2.5 max-w-xl" aria-hidden="true">
+                  <div className="h-2.5 w-[88%] rounded-full gemini-shimmer-bar" />
+                  <div className="h-2.5 w-[70%] rounded-full gemini-shimmer-bar" />
+                  <div className="h-2.5 w-[46%] rounded-full gemini-shimmer-bar" />
                 </div>
               </div>
             )}
@@ -1915,7 +1943,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="shrink-0 px-2 py-1.5 sm:p-4 bg-gradient-to-t from-black via-black/95 to-transparent z-20 border-t border-white/5 md:border-t-0">
+      <div className="shrink-0 px-2 py-2 sm:px-4 sm:pb-4 sm:pt-2 bg-gradient-to-t from-[#0e0f13] via-[#0e0f13]/95 to-transparent z-20">
         <div className="max-w-3xl mx-auto relative px-1 sm:px-0">
           <AnimatePresence>
             {isLoading && onStopGeneration && (
@@ -1923,11 +1951,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                className="absolute -top-10 sm:-top-12 left-1/2 -translate-x-1/2 z-30"
+                className="absolute -top-11 sm:-top-12 left-1/2 -translate-x-1/2 z-30"
               >
                 <button
                   onClick={onStopGeneration}
-                  className="flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#121217] border border-white/15 rounded-full text-white text-xs sm:text-sm font-medium hover:bg-white/10 transition-all shadow-xl"
+                  className="flex items-center gap-1.5 sm:gap-2 px-3.5 py-1.5 sm:px-4 sm:py-2 bg-[#181a21] border border-white/15 rounded-full text-white text-xs sm:text-sm font-medium hover:bg-white/10 transition-all shadow-xl cursor-pointer"
                 >
                   <Square size={12} className="sm:w-3.5 sm:h-3.5" fill="currentColor" />
                   <span>{settings.language === 'en' ? "Stop generating" : "Arrêter la génération"}</span>
@@ -1940,11 +1968,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                className="absolute -top-10 sm:-top-12 left-1/2 -translate-x-1/2 z-30"
+                className="absolute -top-11 sm:-top-12 left-1/2 -translate-x-1/2 z-30"
               >
                 <button
                   onClick={onContinueGeneration}
-                  className="flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#121217] border border-white/15 rounded-full text-white text-xs sm:text-sm font-medium hover:bg-white/10 transition-all shadow-xl"
+                  className="flex items-center gap-1.5 sm:gap-2 px-3.5 py-1.5 sm:px-4 sm:py-2 bg-[#181a21] border border-white/15 rounded-full text-white text-xs sm:text-sm font-medium hover:bg-white/10 transition-all shadow-xl cursor-pointer"
                 >
                   <Play size={12} className="sm:w-3.5 sm:h-3.5" fill="currentColor" />
                   <span>{settings.language === 'en' ? "Continue" : "Continuer"}</span>
@@ -1960,8 +1988,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 className="absolute -top-20 sm:-top-24 left-1 right-1 flex gap-1.5 sm:gap-2 overflow-x-auto pb-2 z-20 scrollbar-hide"
               >
                 {attachedFiles.map((file, idx) => (
-                  <div key={idx} className="bg-[#0f1015] border border-white/15 p-1.5 sm:p-2 rounded-xl flex items-center gap-1.5 sm:gap-2 min-w-[110px] sm:min-w-[120px] max-w-[180px] sm:max-w-[200px] shadow-lg group relative">
-                    <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400 shrink-0">
+                  <div key={idx} className="bg-[#181a21] border border-white/15 p-1.5 sm:p-2 rounded-xl flex items-center gap-1.5 sm:gap-2 min-w-[110px] sm:min-w-[120px] max-w-[180px] sm:max-w-[200px] shadow-lg group relative">
+                    <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-indigo-500/15 flex items-center justify-center text-indigo-400 shrink-0">
                       {file.type.startsWith('image/') ? <ImageIcon size={13} className="sm:w-4 sm:h-4" /> : 
                        file.type.startsWith('video/') ? <Video size={13} className="sm:w-4 sm:h-4" /> : 
                        file.name.match(/\.(csv|json|xlsx|tsv)$/i) ? <BarChart3 size={13} className="sm:w-4 sm:h-4" /> : <FileText size={13} className="sm:w-4 sm:h-4" />}
@@ -1998,7 +2026,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       setInput(suggestion);
                       setAutocompleteSuggestions([]);
                     }}
-                    className="bg-[#0f1015] border border-white/15 hover:bg-[#1a1b24] text-white text-xs sm:text-sm py-1.5 sm:py-2.5 px-3 sm:px-4 rounded-xl text-left transition-all shadow-lg flex items-center gap-2 sm:gap-3 group"
+                    className="bg-[#181a21] border border-white/15 hover:bg-[#22252f] text-white text-xs sm:text-sm py-1.5 sm:py-2.5 px-3 sm:px-4 rounded-xl text-left transition-all shadow-lg flex items-center gap-2 sm:gap-3 group"
                   >
                     <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-indigo-500/20 transition-colors shrink-0">
                       <Sparkles size={12} className="text-indigo-400 sm:w-3.5 sm:h-3.5 group-hover:scale-110 transition-transform" />
@@ -2036,17 +2064,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                className="absolute -top-14 sm:-top-16 left-1 right-1 p-2 sm:p-2.5 bg-red-500/15 border border-red-500/30 rounded-xl flex items-center justify-between gap-2 sm:gap-3 text-red-300 text-xs sm:text-sm backdrop-blur-md z-20 shadow-xl"
+                className="mb-2.5 p-2.5 sm:p-3 bg-red-500/15 border border-red-500/30 rounded-2xl flex items-center justify-between gap-2 sm:gap-3 text-red-200 text-xs sm:text-sm backdrop-blur-md shadow-xl"
               >
-                <div className="flex items-center gap-2 truncate min-w-0">
-                  <AlertCircle size={15} className="sm:w-4 sm:h-4 shrink-0 text-red-400" />
-                  <span className="truncate">{error}</span>
+                <div className="flex items-start gap-2 min-w-0 flex-1">
+                  <AlertCircle size={15} className="sm:w-4 sm:h-4 shrink-0 text-red-400 mt-0.5" />
+                  <span className="leading-snug break-words">{error}</span>
                 </div>
                 {onRetry && (
                   <button
                     type="button"
                     onClick={() => onRetry()}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-red-500/25 hover:bg-red-500/40 text-red-100 hover:text-white border border-red-500/40 rounded-lg text-xs font-semibold shrink-0 transition-all active:scale-95 cursor-pointer shadow"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/25 hover:bg-red-500/40 text-red-100 hover:text-white border border-red-500/40 rounded-xl text-xs font-semibold shrink-0 transition-all active:scale-95 cursor-pointer shadow"
                   >
                     <RefreshCw size={12} className="animate-none" />
                     <span>Réessayer</span>
@@ -2056,7 +2084,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             )}
           </AnimatePresence>
 
-          <form onSubmit={handleSubmit} className="relative group bg-[#0d0e13] border border-white/15 focus-within:border-indigo-500/40 rounded-full shadow-2xl transition-all px-1.5 py-0.5 sm:px-3 sm:py-1.5">
+          <form onSubmit={handleSubmit} className="relative group bg-[#181a21] border border-white/[0.1] focus-within:border-indigo-400/50 rounded-full shadow-2xl transition-all px-2 py-1 sm:px-3.5 sm:py-2">
             <input
               type="file"
               ref={fileInputRef}
@@ -2070,10 +2098,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <button
                   type="button"
                   onClick={handleFileClick}
-                  className="w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/5 rounded-full transition-all shrink-0"
+                  className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/[0.07] rounded-full transition-colors shrink-0 cursor-pointer"
                   title={settings.language === 'en' ? "Attach file (Image, Doc, CSV, JSON...)" : "Ajouter un fichier (Image, Document, CSV, JSON...)"}
                 >
-                  <Plus size={17} className="sm:w-5 sm:h-5" strokeWidth={2.5} />
+                  <Plus size={18} className="sm:w-5 sm:h-5" strokeWidth={2.2} />
                 </button>
               </div>
               
@@ -2084,7 +2112,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={t.placeholder}
-                  className="w-full py-1 sm:py-1.5 bg-transparent outline-none transition-all resize-none text-white placeholder:text-gray-500 leading-snug sm:leading-relaxed text-[16px] sm:text-sm md:text-base min-h-[30px] sm:min-h-[38px] max-h-[160px]"
+                  className="w-full py-1 sm:py-1.5 bg-transparent outline-none transition-all resize-none text-white placeholder:text-gray-400 leading-snug sm:leading-relaxed text-[16px] sm:text-sm md:text-base min-h-[30px] sm:min-h-[38px] max-h-[160px]"
                 />
               </div>
 
@@ -2093,30 +2121,46 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   type="button"
                   onClick={toggleListening}
                   className={cn(
-                    "w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center rounded-full transition-all shrink-0",
-                    isListening ? "bg-red-500 text-white animate-pulse" : "text-gray-400 hover:text-white hover:bg-white/5"
+                    "w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center rounded-full transition-colors shrink-0 cursor-pointer",
+                    isListening ? "bg-red-500 text-white animate-pulse" : "text-gray-400 hover:text-white hover:bg-white/[0.07]"
                   )}
                   title={settings.language === 'en' ? "Voice message" : "Message vocal"}
                 >
-                  {isListening ? <MicOff size={15} className="sm:w-4 sm:h-4" /> : <Mic size={15} className="sm:w-4 sm:h-4" />}
+                  {isListening ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
-                <button
-                  type="submit"
-                  disabled={isLoading || (!input.trim() && attachedFiles.length === 0)}
-                  className={cn(
-                    "rounded-full transition-all shadow-lg active:scale-95 shrink-0 flex items-center justify-center w-7 h-7 sm:w-9 sm:h-9",
-                    (input.trim() || attachedFiles.length > 0)
-                      ? "bg-white text-black hover:bg-gray-200" 
-                      : "bg-white/10 text-gray-500 cursor-not-allowed"
-                  )}
-                >
-                  {(input.trim() || attachedFiles.length > 0) ? <ArrowUp size={15} className="sm:w-4 sm:h-4" strokeWidth={3} /> : <AudioLines size={15} className="sm:w-4 sm:h-4" strokeWidth={2.5} />}
-                </button>
+                {(input.trim() || attachedFiles.length > 0) ? (
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className={cn(
+                      "rounded-full transition-all active:scale-95 shrink-0 flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 cursor-pointer",
+                      isLoading ? "bg-white/10 text-gray-500 cursor-not-allowed" : "bg-white text-black hover:bg-gray-200"
+                    )}
+                    title={settings.language === 'en' ? "Send message" : "Envoyer"}
+                  >
+                    <ArrowUp size={16} strokeWidth={2.5} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onOpenLiveVoice?.()}
+                    disabled={isLoading}
+                    className={cn(
+                      "rounded-full transition-all active:scale-95 shrink-0 flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 cursor-pointer",
+                      isLoading
+                        ? "bg-white/10 text-gray-500 cursor-not-allowed"
+                        : "bg-white text-black hover:bg-gray-200 shadow-sm"
+                    )}
+                    title={settings.language === 'en' ? "Start Tchoumi Voice (Live Conversation)" : "Démarrer Tchoumi Voice (Discussion vocale en direct)"}
+                  >
+                    <AudioLines size={16} strokeWidth={2.2} />
+                  </button>
+                )}
               </div>
             </div>
           </form>
-          <p className="text-[8px] sm:text-[10px] text-gray-500 text-center mt-1 sm:mt-2 font-medium opacity-50">
-            {AI_NAME} {t.disclaimer}
+          <p className="text-[10px] sm:text-[11px] text-gray-500 text-center mt-1.5 sm:mt-2 font-normal">
+            {AI_NAME} · {t.disclaimer}
           </p>
         </div>
       </div>

@@ -20,6 +20,7 @@ export interface Message {
   id: string;
   role: Role;
   content: string;
+  thoughts?: string;
   timestamp: number;
   attachments?: Attachment[];
   imageUrl?: string;

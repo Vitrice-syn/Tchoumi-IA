@@ -1,6 +1,6 @@
 {
   "name": "Tchoumi IA",
-  "description": "Tchoumi IA - La première intelligence artificielle de nouvelle génération en Afrique. Créée par Tchoumi Chilic Vitrice.",
-  "requestFramePermissions": [],
+  "description": "Tchoumi IA (Tchoumi AI) - L'intelligence artificielle africaine développée en Afrique au Cameroun par le créateur et concepteur Tchoumi Chilic Vitrice. Assistant IA intelligent et chatbot génératif de pointe.",
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

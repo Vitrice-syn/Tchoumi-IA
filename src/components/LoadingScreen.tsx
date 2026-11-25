@@ -12,7 +12,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ language }) => {
   const t = translations[language].loading;
 
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-between bg-[#171717] text-white p-6 md:p-12 overflow-hidden">
+    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-between bg-[#0e0f13] text-white p-6 md:p-12 overflow-hidden">
       {/* Background ambient lighting */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] md:w-[500px] md:h-[500px] bg-indigo-600/10 rounded-full blur-[80px] md:blur-[120px]" />

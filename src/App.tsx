@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { LoadingScreen } from './components/LoadingScreen';
+import { LiveVoiceModal, VoiceTranscriptTurn } from './components/LiveVoiceModal';
 import { Chat, Message, AppSettings, ModelProvider, User, Attachment } from './types';
 import { callGeminiStream, generateImage, formatFriendlyErrorMessage } from './lib/ai';
 import { motion, AnimatePresence } from 'motion/react';
@@ -14,12 +15,9 @@ import { translations } from './lib/translations';
 
 const DEFAULT_SETTINGS: AppSettings = {
   plan: 'free',
-  apiKeys: {
-    gemini: (import.meta as any).env?.VITE_GEMINI_API_KEY || 
-            (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : '') || '',
-  },
+  apiKeys: {},
   selectedProvider: 'gemini',
-  selectedModel: 'gemini-3.7-flash',
+  selectedModel: 'gemini-4-hydrogen',
   language: 'en',
   customInstructions: '',
   responseStyle: 'scientific',
@@ -106,27 +104,25 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [showLiveVoice, setShowLiveVoice] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('tchoumi_settings');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        const merged = { ...DEFAULT_SETTINGS, ...parsed };
-        // Prioritize embedded env key if saved key is missing or default
-        if (!merged.apiKeys?.gemini && DEFAULT_SETTINGS.apiKeys.gemini) {
-          merged.apiKeys = { ...merged.apiKeys, gemini: DEFAULT_SETTINGS.apiKeys.gemini };
-        }
-        // Auto-sanitize deprecated models in client localStorage
+        const merged = { ...DEFAULT_SETTINGS, ...parsed, apiKeys: {} };
+        // Auto-sanitize deprecated/legacy models in client localStorage
         if (
           !merged.selectedModel ||
           merged.selectedModel.includes('2.0') ||
           merged.selectedModel.includes('1.5') ||
           merged.selectedModel.includes('2.5') ||
           merged.selectedModel.includes('3-flash-preview') ||
-          merged.selectedModel.includes('3.0')
+          merged.selectedModel.includes('3.0') ||
+          merged.selectedModel.includes('3.7')
         ) {
-          merged.selectedModel = 'gemini-3.7-flash';
+          merged.selectedModel = 'gemini-4-hydrogen';
         }
         return merged;
       } catch (e) {
@@ -388,9 +384,12 @@ export default function App() {
     // Add empty assistant message for streaming
     await saveChatState(currentChatId, [...updatedMessages, assistantMessage]);
 
+    let latestStreamedText = "";
+    let latestStreamedThoughts = "";
+
     try {
       let responseContent = "";
-      const lowerContent = content.toLowerCase();
+      let responseThoughts = "";
 
       // Check for direct image generation request without attached images
       const hasImageAttachment = attachments && attachments.some(a => a.mimeType?.startsWith('image/') || a.type?.startsWith('image/'));
@@ -403,109 +402,42 @@ export default function App() {
         );
 
       if (isDirectImageRequest) {
-        responseContent = await generateImage(content, settings.apiKeys.gemini);
+        responseContent = await generateImage(content);
         assistantMessage.content = responseContent;
       } else {
-        // First try server-side proxy /api/chat (works seamlessly on Render and backend hosting)
-        let handledByServer = false;
-        try {
-          const sseResponse = await fetch("/api/chat", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              messages: updatedMessages,
-              apiKey: settings.apiKeys.gemini,
-              model: settings.selectedModel || "gemini-3.7-flash",
-              customInstructions: settings.customInstructions,
-            }),
-            signal: abortControllerRef.current?.signal,
-          });
-
-          if (sseResponse.ok && sseResponse.body) {
-            const reader = sseResponse.body.getReader();
-            const decoder = new TextDecoder("utf-8");
-            let accumulatedText = "";
-            let buffer = "";
-
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n\n");
-              buffer = lines.pop() || "";
-
-              for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                  const dataStr = line.slice(6).trim();
-                  if (dataStr === "[DONE]") break;
-                  try {
-                    const parsed = JSON.parse(dataStr);
-                    if (parsed.error) {
-                      throw new Error(parsed.error);
-                    }
-                    if (parsed.text) {
-                      accumulatedText += parsed.text;
-                      if (user) {
-                        setChats(prev => prev.map(c => 
-                          c.id === currentChatId 
-                            ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: accumulatedText }] } 
-                            : c
-                        ));
-                      } else {
-                        setGuestChats(prev => prev.map(c => 
-                          c.id === currentChatId 
-                            ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: accumulatedText }] } 
-                            : c
-                        ));
-                      }
-                    }
-                  } catch (e: any) {
-                    if (e.message && !e.message.includes("Unexpected token")) {
-                      throw e;
-                    }
-                  }
-                }
-              }
+        // Stream response via server-side /api/chat SSE endpoint
+        const streamResult = await callGeminiStream(
+          updatedMessages,
+          settings.selectedModel || 'gemini-4-hydrogen',
+          (chunkText, chunkThoughts) => {
+            latestStreamedText = chunkText;
+            latestStreamedThoughts = chunkThoughts || "";
+            const streamingAssistantMsg: Message = {
+              ...assistantMessage,
+              content: chunkText,
+              ...(chunkThoughts ? { thoughts: chunkThoughts } : {}),
+            };
+            // Update local state during streaming immediately
+            if (user) {
+              setChats(prev => prev.map(c => 
+                c.id === currentChatId 
+                  ? { ...c, messages: [...updatedMessages, streamingAssistantMsg] } 
+                  : c
+              ));
+            } else {
+              setGuestChats(prev => prev.map(c => 
+                c.id === currentChatId 
+                  ? { ...c, messages: [...updatedMessages, streamingAssistantMsg] } 
+                  : c
+              ));
             }
-            if (accumulatedText.trim().length > 0) {
-              responseContent = accumulatedText;
-              handledByServer = true;
-            }
-          }
-        } catch (serverErr: any) {
-          if (serverErr.message === "Generation aborted" || abortControllerRef.current?.signal.aborted) {
-            throw new Error("Generation aborted");
-          }
-          console.warn("[Client] /api/chat server proxy fallback to client direct SDK:", serverErr);
-        }
+          },
+          abortControllerRef.current?.signal,
+          settings.customInstructions
+        );
 
-        if (!handledByServer) {
-          responseContent = await callGeminiStream(
-            updatedMessages, 
-            settings.apiKeys.gemini,
-            settings.selectedModel || 'gemini-3.7-flash',
-            (chunk) => {
-              // Update local state during streaming
-              if (user) {
-                setChats(prev => prev.map(c => 
-                  c.id === currentChatId 
-                    ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: chunk }] } 
-                    : c
-                ));
-              } else {
-                setGuestChats(prev => prev.map(c => 
-                  c.id === currentChatId 
-                    ? { ...c, messages: [...updatedMessages, { ...assistantMessage, content: chunk }] } 
-                    : c
-                ));
-              }
-            },
-            abortControllerRef.current?.signal,
-            settings.customInstructions
-          );
-        }
+        responseContent = streamResult.text;
+        responseThoughts = streamResult.thoughts;
 
         // Check if Gemini suggested an image or returned an action
         if (responseContent.includes('"action"') && (responseContent.includes('dalle') || responseContent.includes('text2im') || responseContent.includes('image'))) {
@@ -524,21 +456,37 @@ export default function App() {
                 promptToUse = parsed.action_input.prompt;
               }
             }
-            const generatedUrl = await generateImage(promptToUse, settings.apiKeys.gemini);
+            const generatedUrl = await generateImage(promptToUse);
             responseContent = `Voici la photo générée :\n\n![](${generatedUrl})`;
           } catch {
-            const generatedUrl = await generateImage(content, settings.apiKeys.gemini);
+            const generatedUrl = await generateImage(content);
             responseContent = `Voici la photo générée :\n\n![](${generatedUrl})`;
           }
         }
 
         assistantMessage.content = responseContent;
+        if (responseThoughts) {
+          assistantMessage.thoughts = responseThoughts;
+        }
       }
 
       // Final update after stream or image generation
       await saveChatState(currentChatId, [...updatedMessages, assistantMessage]);
 
     } catch (err: any) {
+      if (!latestStreamedText.trim()) {
+        await saveChatState(currentChatId, updatedMessages);
+      } else {
+        await saveChatState(currentChatId, [
+          ...updatedMessages,
+          {
+            ...assistantMessage,
+            content: latestStreamedText,
+            ...(latestStreamedThoughts ? { thoughts: latestStreamedThoughts } : {}),
+          },
+        ]);
+      }
+
       if (err.message !== "Generation aborted") {
         const readableError = err.message?.includes('projects/')
           ? "Une erreur de synchronisation est survenue lors de l'enregistrement de la discussion."
@@ -571,14 +519,17 @@ export default function App() {
     abortControllerRef.current = new AbortController();
 
     try {
-      const responseContent = await callGeminiStream(
+      const streamResult = await callGeminiStream(
         activeChat.messages,
-        settings.apiKeys.gemini || '',
-        settings.selectedModel || 'gemini-3.7-flash',
-        (chunk) => {
+        settings.selectedModel || 'gemini-4-hydrogen',
+        (chunkText, chunkThoughts) => {
           const updatedMessages = activeChat.messages.map((m, idx) => 
             idx === activeChat.messages.length - 1 
-              ? { ...m, content: lastMessage.content + chunk }
+              ? {
+                  ...m,
+                  content: lastMessage.content + chunkText,
+                  ...(chunkThoughts ? { thoughts: (lastMessage.thoughts || '') + chunkThoughts } : {}),
+                }
               : m
           );
 
@@ -598,7 +549,11 @@ export default function App() {
 
       const finalMessages = activeChat.messages.map((m, idx) => 
         idx === activeChat.messages.length - 1 
-          ? { ...m, content: lastMessage.content + responseContent }
+          ? {
+              ...m,
+              content: lastMessage.content + streamResult.text,
+              ...(streamResult.thoughts ? { thoughts: (lastMessage.thoughts || '') + streamResult.thoughts } : {}),
+            }
           : m
       );
 
@@ -689,10 +644,80 @@ export default function App() {
     await handleSendMessage(userMsg.content, userMsg.attachments, truncatedHistory);
   };
 
+  const handleSaveVoiceTranscript = async (turns: VoiceTranscriptTurn[]) => {
+    if (!turns || turns.length === 0) return;
+
+    const now = Date.now();
+    const voiceMessages: Message[] = turns.map((t, index) => ({
+      id: generateId(),
+      role: t.role,
+      content: t.text,
+      timestamp: now + index,
+    }));
+
+    const firstUserLine = turns.find((t) => t.role === 'user')?.text || turns[0].text;
+    const defaultTitle = firstUserLine.slice(0, 32) + (firstUserLine.length > 32 ? '...' : '');
+
+    if (!activeChatId || !activeChat) {
+      const newChatId = generateId();
+      const newChat: Chat = {
+        id: newChatId,
+        title: defaultTitle || 'Tchoumi Voice',
+        messages: voiceMessages,
+        createdAt: now,
+      };
+
+      if (user) {
+        try {
+          await setDoc(
+            doc(db, 'users', user.uid, 'chats', newChatId),
+            sanitizeForFirestore({ ...newChat, userId: user.uid })
+          );
+          setActiveChatId(newChatId);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/chats/${newChatId}`);
+        }
+      } else {
+        setGuestChats((prev) => [newChat, ...prev]);
+        setActiveChatId(newChatId);
+      }
+      return;
+    }
+
+    const updatedMessages = [...activeChat.messages, ...voiceMessages];
+    const updatedTitle =
+      activeChat.title && activeChat.title !== 'Nouveau Chat'
+        ? activeChat.title
+        : defaultTitle || 'Tchoumi Voice';
+
+    if (user) {
+      try {
+        await setDoc(
+          doc(db, 'users', user.uid, 'chats', activeChatId),
+          sanitizeForFirestore({
+            messages: updatedMessages,
+            title: updatedTitle,
+            updatedAt: now,
+            userId: user.uid,
+          }),
+          { merge: true }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}/chats/${activeChatId}`);
+      }
+    } else {
+      setGuestChats((prev) =>
+        prev.map((c) =>
+          c.id === activeChatId ? { ...c, messages: updatedMessages, title: updatedTitle } : c
+        )
+      );
+    }
+  };
+
   if (!isAuthReady) return null;
 
   return (
-    <div className="flex h-[100dvh] w-full overflow-hidden bg-[#343541]">
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-[#0e0f13]">
       <AnimatePresence>
         {isAppLoading && <LoadingScreen key="loading" language={settings.language} />}
       </AnimatePresence>
@@ -831,14 +856,23 @@ export default function App() {
       </AnimatePresence>
 
       {/* Sidebar */}
-      <div className={`${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:relative z-40 h-full transition-transform duration-300 ease-in-out`}>
+      <div
+        className={`fixed md:relative z-40 h-full transition-all duration-300 ease-in-out shrink-0 overflow-hidden ${
+          isSidebarOpen
+            ? 'translate-x-0 w-64 sm:w-[272px]'
+            : '-translate-x-full md:translate-x-0 w-64 sm:w-[272px] md:w-0'
+        }`}
+      >
         <Sidebar
           chats={currentChats}
           activeChatId={activeChatId}
           language={settings.language}
           user={user}
           plan={settings.plan || 'free'}
-          onNewChat={handleNewChat}
+          onNewChat={() => {
+            setActiveView('chat');
+            handleNewChat();
+          }}
           onSelectChat={(id) => {
             // Auto-delete previous empty chat if switching
             if (activeChatId && activeChatId !== id) {
@@ -848,12 +882,17 @@ export default function App() {
               }
             }
             setActiveChatId(id);
+            setActiveView('chat');
             if (window.innerWidth < 768) setIsSidebarOpen(false);
           }}
           onDeleteChat={handleDeleteChat}
           onOpenSettings={(cat) => {
             if (cat) setSettingsCategory(cat);
             setActiveView('settings');
+          }}
+          onQuickImageMode={() => {
+            setActiveView('chat');
+            handleNewChat();
           }}
           onLogin={() => setShowLoginPrompt(true)}
           onClose={() => setIsSidebarOpen(false)}
@@ -884,9 +923,18 @@ export default function App() {
           onContinueGeneration={handleContinueGeneration}
           onEditMessage={handleEditMessage}
           onRetry={handleRetryMessage}
+          onOpenLiveVoice={() => setShowLiveVoice(true)}
           wasInterrupted={wasInterrupted}
         />
       </main>
+
+      <LiveVoiceModal
+        isOpen={showLiveVoice}
+        language={settings.language}
+        customInstructions={settings.customInstructions}
+        onClose={() => setShowLiveVoice(false)}
+        onSaveTranscript={handleSaveVoiceTranscript}
+      />
     </div>
   );
 }

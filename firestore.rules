@@ -18,18 +18,18 @@ service cloud.firestore {
 
     // User profiles
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      allow read: if isOwner(userId) || isFounder();
       allow create, update: if isOwner(userId) || isFounder();
       
       // User's chats
       match /chats/{chatId} {
-        allow read, write, delete: if isOwner(userId);
+        allow read, write: if isOwner(userId);
       }
     }
 
     // Pro users registry (verified by email)
     match /pro_users/{email} {
-      allow read: if true;
+      allow read: if isAuthenticated();
       allow create, update, delete: if isFounder();
     }
 
