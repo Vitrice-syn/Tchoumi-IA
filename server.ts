@@ -5,18 +5,23 @@ import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 import { WebSocketServer, WebSocket } from "ws";
 import dotenv from "dotenv";
 import { TCHOUMI_SYSTEM_PROMPT } from "./src/lib/systemPrompt";
+import { getModelById, TCHOUMI_MODELS } from "./src/lib/models";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Body parsing with support for image/file base64 attachments
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-const ALLOWED_MODELS = new Set(["gemini-4-hydrogen", "gemini-3.1-flash-lite"]);
+const ALLOWED_MODELS = new Set([
+  "gemini-4-hydrogen",
+  "gemini-3.1-flash-lite",
+  ...TCHOUMI_MODELS.map((m) => m.id),
+]);
 
 function getServerGeminiApiKey(): string {
   const raw =
@@ -156,13 +161,24 @@ app.post("/api/chat", async (req, res) => {
     });
   }
 
-  const requestedModel =
+  const requestedModelId =
     typeof model === "string" && ALLOWED_MODELS.has(model)
       ? model
-      : "gemini-4-hydrogen";
+      : "tchoumi-pulse";
+
+  const isLegacyBackendId =
+    requestedModelId === "gemini-4-hydrogen" ||
+    requestedModelId === "gemini-3.1-flash-lite";
+  const tchoumiModelDef = isLegacyBackendId ? null : getModelById(requestedModelId);
+  const primaryBackendModel = isLegacyBackendId
+    ? requestedModelId
+    : tchoumiModelDef!.backendModel;
+  const enableThoughts = tchoumiModelDef
+    ? tchoumiModelDef.thinking
+    : primaryBackendModel === "gemini-4-hydrogen";
 
   const fallbackModels = [
-    requestedModel,
+    primaryBackendModel,
     "gemini-4-hydrogen",
     "gemini-3.1-flash-lite",
   ].filter((m, i, arr) => arr.indexOf(m) === i);
@@ -232,9 +248,13 @@ app.post("/api/chat", async (req, res) => {
       ? customInstructions.trim().slice(0, 4000)
       : "";
 
+  const modelFocusBlock = tchoumiModelDef?.systemFocus
+    ? `\n\n${tchoumiModelDef.systemFocus}`
+    : "";
+
   const fullInstruction = sanitizedCustomInstructions
-    ? `${TCHOUMI_SYSTEM_PROMPT}\n\nInstructions supplémentaires de l'utilisateur :\n${sanitizedCustomInstructions}`
-    : TCHOUMI_SYSTEM_PROMPT;
+    ? `${TCHOUMI_SYSTEM_PROMPT}${modelFocusBlock}\n\nInstructions supplémentaires de l'utilisateur :\n${sanitizedCustomInstructions}`
+    : `${TCHOUMI_SYSTEM_PROMPT}${modelFocusBlock}`;
 
   // Set SSE Headers
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -272,7 +292,7 @@ app.post("/api/chat", async (req, res) => {
           contents,
           config: {
             systemInstruction: fullInstruction,
-            ...(currentModel === "gemini-4-hydrogen"
+            ...(currentModel === "gemini-4-hydrogen" && enableThoughts
               ? { thinkingConfig: { includeThoughts: true } }
               : {}),
           },

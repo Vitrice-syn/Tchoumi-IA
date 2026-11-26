@@ -3,8 +3,9 @@ import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { LoadingScreen } from './components/LoadingScreen';
 import { LiveVoiceModal, VoiceTranscriptTurn } from './components/LiveVoiceModal';
-import { Chat, Message, AppSettings, ModelProvider, User, Attachment } from './types';
+import { Chat, Message, AppSettings, ModelProvider, User, Attachment, UserPlan } from './types';
 import { callGeminiStream, generateImage, formatFriendlyErrorMessage } from './lib/ai';
+import { TCHOUMI_MODELS, getModelById, hasPlanAccess } from './lib/models';
 import { motion, AnimatePresence } from 'motion/react';
 import { Menu, X, LogIn, Sparkles, ShieldCheck, Check, Lock, Cloud, Zap, ArrowRight } from 'lucide-react';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError, sanitizeForFirestore } from './firebase';
@@ -17,7 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   plan: 'free',
   apiKeys: {},
   selectedProvider: 'gemini',
-  selectedModel: 'gemini-4-hydrogen',
+  selectedModel: 'tchoumi-pulse',
   language: 'en',
   customInstructions: '',
   responseStyle: 'scientific',
@@ -105,6 +106,7 @@ export default function App() {
   });
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [showLiveVoice, setShowLiveVoice] = useState(false);
+  const [requestedUpgradePlan, setRequestedUpgradePlan] = useState<UserPlan | null>(null);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('tchoumi_settings');
@@ -112,17 +114,9 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         const merged = { ...DEFAULT_SETTINGS, ...parsed, apiKeys: {} };
-        // Auto-sanitize deprecated/legacy models in client localStorage
-        if (
-          !merged.selectedModel ||
-          merged.selectedModel.includes('2.0') ||
-          merged.selectedModel.includes('1.5') ||
-          merged.selectedModel.includes('2.5') ||
-          merged.selectedModel.includes('3-flash-preview') ||
-          merged.selectedModel.includes('3.0') ||
-          merged.selectedModel.includes('3.7')
-        ) {
-          merged.selectedModel = 'gemini-4-hydrogen';
+        const isKnownModel = TCHOUMI_MODELS.some((m) => m.id === merged.selectedModel);
+        if (!isKnownModel) {
+          merged.selectedModel = 'tchoumi-pulse';
         }
         return merged;
       } catch (e) {
@@ -164,7 +158,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Sync user plan from Firestore (Pro status managed by founder)
+  // Sync user plan from Firestore (Plus / Pro / Ultra managed by founder)
   useEffect(() => {
     if (!user || !user.email) {
       setSettings(prev => ({ ...prev, plan: 'free' }));
@@ -172,16 +166,20 @@ export default function App() {
     }
 
     const emailKey = user.email.toLowerCase().trim();
+    const isFounderAccount = emailKey === 'ronysite4@gmail.com';
     const proDocRef = doc(db, 'pro_users', emailKey);
 
     const unsubPro = onSnapshot(proDocRef, (snap) => {
       if (snap.exists() && snap.data()?.status === 'active') {
-        setSettings(prev => ({ ...prev, plan: 'pro' }));
+        const rawPlan = snap.data()?.plan;
+        const resolvedPlan: UserPlan =
+          rawPlan === 'plus' || rawPlan === 'pro' || rawPlan === 'ultra' ? rawPlan : 'pro';
+        setSettings(prev => ({ ...prev, plan: resolvedPlan }));
       } else {
-        setSettings(prev => ({ ...prev, plan: 'free' }));
+        setSettings(prev => ({ ...prev, plan: isFounderAccount ? 'ultra' : 'free' }));
       }
     }, () => {
-      setSettings(prev => ({ ...prev, plan: 'free' }));
+      setSettings(prev => ({ ...prev, plan: isFounderAccount ? 'ultra' : 'free' }));
     });
 
     return () => unsubPro();
@@ -391,9 +389,19 @@ export default function App() {
       let responseContent = "";
       let responseThoughts = "";
 
+      // Check for video generation request (Pro & Ultra exclusive)
+      const isDirectVideoRequest =
+        /(g[eé]n[eé]r|cr[eé]|fai[st]|produi|r[eé]alis|generat|creat|make).*(vid[eé]o|clip|film|reel|animation)/i.test(content) ||
+        /^(vid[eé]o|clip)\s+(de|d'|du|sur|pour|about|of)/i.test(content.trim()) ||
+        content.toLowerCase().startsWith('/video');
+
+      const effectivePlan: UserPlan = settings.plan || 'free';
+      const hasProVideoAccess = hasPlanAccess(effectivePlan, 'pro');
+
       // Check for direct image generation request without attached images
       const hasImageAttachment = attachments && attachments.some(a => a.mimeType?.startsWith('image/') || a.type?.startsWith('image/'));
-      const isDirectImageRequest = 
+      const isDirectImageRequest =
+        !isDirectVideoRequest &&
         !hasImageAttachment && (
           /(g[eé]n[eé]r|cr[eé]|dessin|pein|illustr|fai[st]|produi|rend|draw|generat|creat|make).*(image|dessin|illustration|visuel|portrait|photo|tableau d'art|picture|artwork|avatar)/i.test(content) ||
           /^(image|photo|dessin|illustration|portrait)\s+(de|d'|du|des|d'un|d'une|pour|sur)/i.test(content.trim()) ||
@@ -401,14 +409,30 @@ export default function App() {
           content.toLowerCase().startsWith('/imagine')
         );
 
-      if (isDirectImageRequest) {
+      if (isDirectVideoRequest && !hasProVideoAccess) {
+        responseContent =
+          settings.language === 'en'
+            ? `🎬 **AI Video Generation is reserved for Pro & Ultra plans**\n\nYour current plan (**${effectivePlan.toUpperCase()}**) does not include AI Video Generation.\n\n- **Plan Pro (12,559 FCFA / year)** : Unlocks **Tchoumi Titan** & AI Video Studio\n- **Plan Ultra (29,900 FCFA / year)** : Unlocks **Tchoumi Sovereign** & Priority HD Video\n\nClick **Upgrade** in the modal that just opened (or go to **Settings > Account & Plan**) to activate your Pro access with the Founder.`
+            : `🎬 **La génération de vidéo IA est réservée aux formules Pro et Ultra**\n\nVotre formule actuelle (**${effectivePlan.toUpperCase()}**) n'inclut pas encore la création de vidéo.\n\n- **Plan Pro (12 559 FCFA / an)** : Débloque **Tchoumi Titan** & la Génération de Vidéo IA\n- **Plan Ultra (29 900 FCFA / an)** : Débloque **Tchoumi Sovereign** & la Vidéo HD prioritaire\n\nValidez votre passage au **Plan Pro** dans la fenêtre qui vient de s'ouvrir (ou dans **Paramètres > Compte & Abonnement**) pour débloquer cette fonctionnalité.`;
+        assistantMessage.content = responseContent;
+        setRequestedUpgradePlan('pro');
+      } else if (isDirectImageRequest) {
         responseContent = await generateImage(content);
         assistantMessage.content = responseContent;
       } else {
+        const selectedDef = getModelById(settings.selectedModel);
+        const safeModelId = hasPlanAccess(effectivePlan, selectedDef.requiredPlan)
+          ? selectedDef.id
+          : 'tchoumi-pulse';
+        const effectiveModelId = isDirectVideoRequest ? 'tchoumi-titan' : safeModelId;
+        const effectiveCustomInstructions = isDirectVideoRequest
+          ? `${settings.customInstructions || ''}\n\n[STUDIO VIDÉO PRO ACTIF] L'utilisateur dispose du Plan ${effectivePlan.toUpperCase()}. Produis un dossier complet de production vidéo prêt à tourner/générer : 1) Concept & direction artistique, 2) Découpage scène par scène (timecodes, mouvements de caméra, lumière, ambiance sonore/voix off), 3) Prompt vidéo haute précision optimisé prêt à copier pour le rendu vidéo.`
+          : settings.customInstructions;
+
         // Stream response via server-side /api/chat SSE endpoint
         const streamResult = await callGeminiStream(
           updatedMessages,
-          settings.selectedModel || 'gemini-4-hydrogen',
+          effectiveModelId,
           (chunkText, chunkThoughts) => {
             latestStreamedText = chunkText;
             latestStreamedThoughts = chunkThoughts || "";
@@ -433,7 +457,7 @@ export default function App() {
             }
           },
           abortControllerRef.current?.signal,
-          settings.customInstructions
+          effectiveCustomInstructions
         );
 
         responseContent = streamResult.text;
@@ -924,6 +948,8 @@ export default function App() {
           onEditMessage={handleEditMessage}
           onRetry={handleRetryMessage}
           onOpenLiveVoice={() => setShowLiveVoice(true)}
+          requestedUpgradePlan={requestedUpgradePlan}
+          onClearRequestedUpgradePlan={() => setRequestedUpgradePlan(null)}
           wasInterrupted={wasInterrupted}
         />
       </main>

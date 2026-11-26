@@ -11,10 +11,11 @@ import {
   Layers, Eye, EyeOff, RefreshCw, FileSpreadsheet, Mail, MessageSquare,
   Crown, Zap, ShieldCheck, Star, CreditCard
 } from 'lucide-react';
-import { Message, AppSettings, ModelProvider, Attachment, ConnectedApp } from '../types';
+import { Message, AppSettings, ModelProvider, Attachment, ConnectedApp, UserPlan } from '../types';
 import { MessageItem } from './MessageItem';
 import { AI_NAME, AI_AVATAR_URL } from '../constants';
 import { translations } from '../lib/translations';
+import { TCHOUMI_MODELS, TCHOUMI_PLANS, getModelById, getPlanById, hasPlanAccess } from '../lib/models';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase';
@@ -44,6 +45,8 @@ interface ChatAreaProps {
   onEditMessage?: (id: string, newContent: string) => void;
   onRetry?: (messageId?: string) => void;
   onOpenLiveVoice?: () => void;
+  requestedUpgradePlan?: UserPlan | null;
+  onClearRequestedUpgradePlan?: () => void;
   wasInterrupted?: boolean;
 }
 
@@ -71,6 +74,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onEditMessage,
   onRetry,
   onOpenLiveVoice,
+  requestedUpgradePlan = null,
+  onClearRequestedUpgradePlan,
   wasInterrupted = false,
 }) => {
   const [input, setInput] = useState('');
@@ -84,7 +89,49 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
   const [showMobileDetail, setShowMobileDetail] = useState(false);
   const [showProUpgradeModal, setShowProUpgradeModal] = useState(false);
+  const [upgradeTargetPlan, setUpgradeTargetPlan] = useState<UserPlan>('pro');
   const [upgradeNotification, setUpgradeNotification] = useState<string | null>(null);
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+
+  const effectivePlan: UserPlan = settings.plan || 'free';
+  const activeModelDef = getModelById(settings.selectedModel);
+  const selectedUpgradePlanDef = getPlanById(upgradeTargetPlan);
+
+  useEffect(() => {
+    if (requestedUpgradePlan) {
+      setUpgradeTargetPlan(requestedUpgradePlan);
+      setShowProUpgradeModal(true);
+      onClearRequestedUpgradePlan?.();
+    }
+  }, [requestedUpgradePlan, onClearRequestedUpgradePlan]);
+
+  useEffect(() => {
+    if (!showModelMenu) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+        setShowModelMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [showModelMenu]);
+
+  const openUpgradeModalForPlan = (planId: UserPlan) => {
+    setUpgradeTargetPlan(planId === 'free' ? 'pro' : planId);
+    setShowProUpgradeModal(true);
+  };
+
+  const handleSelectModel = (modelId: string) => {
+    const modelDef = getModelById(modelId);
+    if (!hasPlanAccess(effectivePlan, modelDef.requiredPlan)) {
+      setShowModelMenu(false);
+      openUpgradeModalForPlan(modelDef.requiredPlan);
+      return;
+    }
+    onUpdateSettings({ ...settings, selectedModel: modelDef.id });
+    setShowModelMenu(false);
+  };
   
   // App Connection Modal state
   const [connectingApp, setConnectingApp] = useState<{
@@ -104,7 +151,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   // Founder management state
   const isFounder = userEmail === 'ronysite4@gmail.com';
   const [founderTargetEmail, setFounderTargetEmail] = useState('');
-  const [proUsersList, setProUsersList] = useState<{ id: string; email: string; status: string; activatedAt?: number }[]>([]);
+  const [founderTargetPlan, setFounderTargetPlan] = useState<'plus' | 'pro' | 'ultra'>('pro');
+  const [proUsersList, setProUsersList] = useState<{ id: string; email: string; status: string; plan?: 'plus' | 'pro' | 'ultra'; activatedAt?: number }[]>([]);
   const [isSavingProUser, setIsSavingProUser] = useState(false);
   const [founderActionMsg, setFounderActionMsg] = useState<string | null>(null);
 
@@ -123,7 +171,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     try {
       const q = collection(db, 'pro_users');
       const unsub = onSnapshot(q, (snapshot) => {
-        const list: { id: string; email: string; status: string; activatedAt?: number }[] = [];
+        const list: { id: string; email: string; status: string; plan?: 'plus' | 'pro' | 'ultra'; activatedAt?: number }[] = [];
         snapshot.forEach((doc) => {
           list.push({ id: doc.id, ...doc.data() } as any);
         });
@@ -137,8 +185,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [isFounder]);
 
-  const handleFounderActivatePro = async (emailToActivate?: string) => {
+  const handleFounderActivatePro = async (emailToActivate?: string, planOverride?: 'plus' | 'pro' | 'ultra') => {
     const target = (emailToActivate || founderTargetEmail).toLowerCase().trim();
+    const planToAssign = planOverride || founderTargetPlan;
     if (!target || !target.includes('@')) {
       setFounderActionMsg("Veuillez saisir une adresse email valide.");
       return;
@@ -148,10 +197,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       await setDoc(doc(db, 'pro_users', target), {
         email: target,
         status: 'active',
+        plan: planToAssign,
         activatedAt: Date.now(),
         activatedBy: 'founder'
       }, { merge: true });
-      setFounderActionMsg(`Plan Pro activé avec succès pour ${target} ! 🚀`);
+      setFounderActionMsg(`Plan ${planToAssign.toUpperCase()} activé avec succès pour ${target} ! 🚀`);
       if (!emailToActivate) setFounderTargetEmail('');
       setTimeout(() => setFounderActionMsg(null), 4000);
     } catch (err: any) {
@@ -170,7 +220,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         status: 'inactive',
         deactivatedAt: Date.now()
       }, { merge: true });
-      setFounderActionMsg(`Plan Pro désactivé pour ${target}.`);
+      setFounderActionMsg(`Abonnement désactivé pour ${target}.`);
       setTimeout(() => setFounderActionMsg(null), 4000);
     } catch (err: any) {
       setFounderActionMsg(`Erreur : ${err.message || 'Impossible de désactiver'}`);
@@ -485,8 +535,107 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </button>
           )}
 
-          <div className="px-2 py-1 flex items-center gap-2 text-white font-semibold text-[15px] tracking-tight">
-            <span>{AI_NAME}</span>
+          <div className="relative" ref={modelMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowModelMenu((prev) => !prev)}
+              className="px-2.5 py-1.5 rounded-xl hover:bg-white/[0.06] flex items-center gap-2 text-white font-semibold text-[15px] tracking-tight transition-colors cursor-pointer"
+              title={settings.language === 'en' ? 'Select Tchoumi AI model' : 'Choisir le modèle Tchoumi IA'}
+            >
+              <span>{AI_NAME}</span>
+              <span className="text-xs font-medium text-indigo-300 bg-indigo-500/15 border border-indigo-500/25 px-2 py-0.5 rounded-lg">
+                {activeModelDef.name.replace('Tchoumi ', '')}
+              </span>
+              <ChevronDown size={14} className={cn("text-gray-400 transition-transform", showModelMenu && "rotate-180")} />
+            </button>
+
+            <AnimatePresence>
+              {showModelMenu && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute left-0 top-full mt-2 w-72 sm:w-80 bg-[#15171e] border border-white/10 rounded-2xl shadow-2xl p-2 z-50 space-y-1"
+                >
+                  <div className="px-2.5 py-1.5 flex items-center justify-between border-b border-white/5 mb-1">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                      {settings.language === 'en' ? 'Tchoumi AI Models' : 'Modèles Tchoumi IA'}
+                    </span>
+                    <span className="text-[10px] text-gray-500">
+                      {getPlanById(effectivePlan).name}
+                    </span>
+                  </div>
+                  {TCHOUMI_MODELS.map((m) => {
+                    const isUnlocked = hasPlanAccess(effectivePlan, m.requiredPlan);
+                    const isSelected = activeModelDef.id === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => handleSelectModel(m.id)}
+                        className={cn(
+                          "w-full text-left px-3 py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2.5 cursor-pointer",
+                          isSelected
+                            ? "bg-indigo-600/20 border border-indigo-500/40 text-white"
+                            : isUnlocked
+                              ? "hover:bg-white/[0.06] border border-transparent text-gray-200"
+                              : "hover:bg-white/[0.04] border border-transparent text-gray-400"
+                        )}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-white">{m.name}</span>
+                            <span
+                              className={cn(
+                                "text-[10px] font-bold px-1.5 py-0.5 rounded",
+                                m.requiredPlan === 'ultra'
+                                  ? "bg-violet-500/20 text-violet-300"
+                                  : m.requiredPlan === 'pro'
+                                    ? "bg-amber-500/20 text-amber-300"
+                                    : m.requiredPlan === 'plus'
+                                      ? "bg-sky-500/20 text-sky-300"
+                                      : "bg-white/10 text-gray-300"
+                              )}
+                            >
+                              {m.badge[settings.language]}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">
+                            {m.tagline[settings.language]}
+                          </p>
+                        </div>
+                        <div className="shrink-0 mt-0.5">
+                          {isSelected ? (
+                            <Check size={15} className="text-indigo-400" />
+                          ) : !isUnlocked ? (
+                            <Lock size={13} className="text-gray-500" />
+                          ) : null}
+                        </div>
+                      </button>
+                    );
+                  })}
+                  <div className="pt-1.5 mt-1 border-t border-white/5 px-2 pb-1 flex items-center justify-between text-[11px] text-gray-400">
+                    <span className="flex items-center gap-1.5">
+                      <Video size={12} className="text-amber-400" />
+                      {settings.language === 'en' ? 'AI Video: Pro & Ultra' : 'Vidéo IA : Pro & Ultra'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowModelMenu(false);
+                        setSettingsCategory('account');
+                        setShowMobileDetail(true);
+                        onViewChange('settings');
+                      }}
+                      className="text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer"
+                    >
+                      {settings.language === 'en' ? 'Plans' : 'Tarifs'}
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -597,22 +746,30 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{tSettings.planSection}</span>
                   <span className={cn(
                     "text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1",
-                    settings.plan === 'pro'
-                      ? "bg-amber-400/20 text-amber-300 border border-amber-400/30"
-                      : "bg-white/10 text-gray-300 border border-white/10"
+                    effectivePlan === 'ultra'
+                      ? "bg-violet-500/20 text-violet-300 border border-violet-400/30"
+                      : effectivePlan === 'pro'
+                        ? "bg-amber-400/20 text-amber-300 border border-amber-400/30"
+                        : effectivePlan === 'plus'
+                          ? "bg-sky-500/20 text-sky-300 border border-sky-400/30"
+                          : "bg-white/10 text-gray-300 border border-white/10"
                   )}>
-                    {settings.plan === 'pro' ? (
-                      <>
-                        <Crown size={10} className="text-amber-400" />
-                        <span>{tSettings.planPro}</span>
-                      </>
-                    ) : (
-                      <span>{tSettings.planFree}</span>
-                    )}
+                    {effectivePlan !== 'free' && <Crown size={10} />}
+                    <span>
+                      {effectivePlan === 'ultra'
+                        ? tSettings.planUltra
+                        : effectivePlan === 'pro'
+                          ? tSettings.planPro
+                          : effectivePlan === 'plus'
+                            ? tSettings.planPlus
+                            : tSettings.planFree}
+                    </span>
                   </span>
                 </div>
                 <p className="text-xs text-gray-300 font-medium truncate">
-                  {settings.plan === 'pro' ? tSettings.proActiveShort : tSettings.upgradeToProShort}
+                  {effectivePlan === 'pro' || effectivePlan === 'ultra'
+                    ? tSettings.proActiveShort
+                    : tSettings.upgradeToProShort}
                 </p>
               </div>
             </div>
@@ -1446,9 +1603,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               {settingsCategory === 'general' && (
                 <div className="space-y-6">
                   <div className="p-5 bg-[#0c0d12] rounded-2xl border border-white/10 space-y-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
                           <Cpu size={20} />
                         </div>
                         <div>
@@ -1456,9 +1613,56 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           <p className="text-xs text-gray-400">{tSettings.general.modelDesc}</p>
                         </div>
                       </div>
-                      <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold">
-                        {tSettings.general.optimizedBadge}
+                      <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold shrink-0">
+                        {activeModelDef.name}
                       </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                      {TCHOUMI_MODELS.map((m) => {
+                        const isUnlocked = hasPlanAccess(effectivePlan, m.requiredPlan);
+                        const isSelected = activeModelDef.id === m.id;
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => handleSelectModel(m.id)}
+                            className={cn(
+                              "p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between gap-2 cursor-pointer",
+                              isSelected
+                                ? "bg-indigo-600/15 border-indigo-500/60 ring-1 ring-indigo-500/30"
+                                : isUnlocked
+                                  ? "bg-[#13141c] border-white/10 hover:border-white/25"
+                                  : "bg-[#111218] border-white/5 opacity-80 hover:opacity-100 hover:border-amber-500/30"
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-bold text-white">{m.name}</span>
+                              <span
+                                className={cn(
+                                  "text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1",
+                                  m.requiredPlan === 'ultra'
+                                    ? "bg-violet-500/20 text-violet-300 border border-violet-500/30"
+                                    : m.requiredPlan === 'pro'
+                                      ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                      : m.requiredPlan === 'plus'
+                                        ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
+                                        : "bg-white/10 text-gray-300"
+                                )}
+                              >
+                                {!isUnlocked && <Lock size={9} />}
+                                {m.badge[settings.language]}
+                              </span>
+                            </div>
+                            <p className="text-[11px] font-medium text-indigo-300/90">
+                              {m.tagline[settings.language]}
+                            </p>
+                            <p className="text-[11px] text-gray-400 leading-relaxed">
+                              {m.description[settings.language]}
+                            </p>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1572,18 +1776,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           <h3 className="text-lg font-bold text-white truncate">{isLoggedIn ? (userEmail || tSettings.account.connectedAs) : tSettings.account.guestUser}</h3>
                           <span className={cn(
                             "px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1",
-                            settings.plan === 'pro'
-                              ? "bg-amber-400/20 text-amber-300 border border-amber-400/40 shadow-sm"
-                              : "bg-white/10 text-gray-300 border border-white/10"
+                            effectivePlan === 'ultra'
+                              ? "bg-violet-500/20 text-violet-300 border border-violet-400/40"
+                              : effectivePlan === 'pro'
+                                ? "bg-amber-400/20 text-amber-300 border border-amber-400/40 shadow-sm"
+                                : effectivePlan === 'plus'
+                                  ? "bg-sky-500/20 text-sky-300 border border-sky-400/40"
+                                  : "bg-white/10 text-gray-300 border border-white/10"
                           )}>
-                            {settings.plan === 'pro' ? (
-                              <>
-                                <Crown size={12} className="text-amber-400" />
-                                <span>{tSettings.account.proName}</span>
-                              </>
-                            ) : (
-                              <span>{tSettings.account.freeName}</span>
-                            )}
+                            {effectivePlan !== 'free' && <Crown size={12} />}
+                            <span>{getPlanById(effectivePlan).name}</span>
                           </span>
                         </div>
                         <p className="text-gray-400 text-xs truncate">
@@ -1603,135 +1805,165 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     )}
                   </div>
 
-                  {/* Gestion de l'Abonnement et Formules */}
+                  {/* Gestion de l'Abonnement et Formules (Free, Plus, Pro, Ultra) */}
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <h4 className="text-sm font-bold text-gray-400 uppercase tracking-wider">{tSettings.account.planTitle}</h4>
                       <span className="text-xs text-gray-500">{tSettings.account.planSubtitle}</span>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Carte Plan Free */}
-                      <div className={cn(
-                        "p-5 rounded-2xl border transition-all flex flex-col justify-between space-y-4 relative",
-                        settings.plan !== 'pro'
-                          ? "bg-[#0f1018] border-indigo-500/40 shadow-lg shadow-indigo-500/5 ring-1 ring-indigo-500/20"
-                          : "bg-[#0c0d12] border-white/10 opacity-75 hover:opacity-100"
-                      )}>
-                        {settings.plan !== 'pro' && (
-                          <div className="absolute top-3 right-3 px-2 py-0.5 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 rounded-md text-[10px] font-bold">
-                            {tSettings.account.currentPlan}
-                          </div>
-                        )}
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-gray-400">
-                              <UserIcon size={16} />
-                            </div>
-                            <div>
-                              <h5 className="text-white font-bold text-base">{tSettings.account.freeName}</h5>
-                              <p className="text-xs text-gray-400">{tSettings.account.freeSubtitle}</p>
-                            </div>
-                          </div>
+                      {TCHOUMI_PLANS.map((planItem) => {
+                        const isCurrent = effectivePlan === planItem.id;
+                        const isAlreadyIncluded = hasPlanAccess(effectivePlan, planItem.id) && !isCurrent;
+                        const isProOrUltra = planItem.id === 'pro' || planItem.id === 'ultra';
 
-                          <div className="space-y-2 pt-2 border-t border-white/5 text-xs text-gray-300">
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-indigo-400 shrink-0" />
-                              <span>{tSettings.account.freeFeature1}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-indigo-400 shrink-0" />
-                              <span>{tSettings.account.freeFeature2}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-indigo-400 shrink-0" />
-                              <span>{tSettings.account.freeFeature3}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-indigo-400 shrink-0" />
-                              <span>{tSettings.account.freeFeature4}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-center text-xs text-gray-400">
-                          {tSettings.account.freeStatus}
-                        </div>
-                      </div>
-
-                      {/* Carte Plan Pro */}
-                      <div className={cn(
-                        "p-5 rounded-2xl border transition-all flex flex-col justify-between space-y-4 relative overflow-hidden",
-                        settings.plan === 'pro'
-                          ? "bg-gradient-to-b from-[#171524] to-[#0e0f19] border-amber-400/40 shadow-xl shadow-amber-500/10 ring-1 ring-amber-400/30"
-                          : "bg-gradient-to-b from-[#131422] to-[#0c0d14] border-indigo-500/30 hover:border-indigo-500/60 shadow-lg hover:shadow-indigo-500/10"
-                      )}>
-                        {/* Glow ambient */}
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
-
-                        {settings.plan === 'pro' ? (
-                          <div className="absolute top-3 right-3 px-2 py-0.5 bg-amber-400/20 text-amber-300 border border-amber-400/40 rounded-md text-[10px] font-black flex items-center gap-1">
-                            <Crown size={10} /> {tSettings.apps.active}
-                          </div>
-                        ) : (
-                          <div className="absolute top-3 right-3 px-2 py-0.5 bg-gradient-to-r from-amber-500 to-indigo-500 text-white rounded-md text-[10px] font-bold shadow-sm">
-                            PRO
-                          </div>
-                        )}
-
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center text-white shadow-md">
-                              <Crown size={16} />
-                            </div>
-                            <div>
-                              <h5 className="text-white font-bold text-base flex items-center gap-1.5">
-                                {tSettings.account.proName}
-                                <Sparkles size={14} className="text-amber-400" />
-                              </h5>
-                              <p className="text-xs text-amber-300/80 font-medium">{tSettings.account.proSubtitle}</p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2 pt-2 border-t border-white/10 text-xs text-gray-200">
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-emerald-400 shrink-0 font-bold" />
-                              <span>{tSettings.account.proFeature1}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-emerald-400 shrink-0 font-bold" />
-                              <span>{tSettings.account.proFeature2}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-emerald-400 shrink-0 font-bold" />
-                              <span>{tSettings.account.proFeature3}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-emerald-400 shrink-0 font-bold" />
-                              <span>{tSettings.account.proFeature4}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Check size={14} className="text-emerald-400 shrink-0 font-bold" />
-                              <span>{tSettings.account.proFeature5}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {settings.plan === 'pro' ? (
-                          <div className="w-full py-2.5 px-4 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-300 text-xs font-bold text-center flex items-center justify-center gap-1.5">
-                            <ShieldCheck size={14} className="text-amber-400" />
-                            {tSettings.account.proActiveBadge}
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setShowProUpgradeModal(true)}
-                            className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 hover:from-amber-400 to-indigo-600 hover:to-indigo-500 text-black font-black text-xs transition-all active:scale-[0.98] shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                        return (
+                          <div
+                            key={planItem.id}
+                            className={cn(
+                              "p-5 rounded-2xl border transition-all flex flex-col justify-between space-y-4 relative overflow-hidden",
+                              isCurrent
+                                ? planItem.id === 'ultra'
+                                  ? "bg-gradient-to-b from-[#1a1429] to-[#0e0f19] border-violet-400/50 ring-1 ring-violet-400/30 shadow-xl shadow-violet-500/10"
+                                  : planItem.id === 'pro'
+                                    ? "bg-gradient-to-b from-[#171524] to-[#0e0f19] border-amber-400/50 ring-1 ring-amber-400/30 shadow-xl shadow-amber-500/10"
+                                    : planItem.id === 'plus'
+                                      ? "bg-gradient-to-b from-[#111926] to-[#0e0f19] border-sky-400/50 ring-1 ring-sky-400/30 shadow-xl shadow-sky-500/10"
+                                      : "bg-[#0f1018] border-indigo-500/40 ring-1 ring-indigo-500/20 shadow-lg"
+                                : planItem.popular
+                                  ? "bg-gradient-to-b from-[#131422] to-[#0c0d14] border-amber-500/35 hover:border-amber-400/60 shadow-lg"
+                                  : "bg-[#0c0d12] border-white/10 hover:border-white/25"
+                            )}
                           >
-                            <Crown size={14} className="text-black fill-black" />
-                            <span>{tSettings.account.upgradeBtn}</span>
-                          </button>
-                        )}
-                      </div>
+                            {isProOrUltra && (
+                              <div
+                                className={cn(
+                                  "absolute top-0 right-0 w-32 h-32 rounded-full blur-2xl pointer-events-none",
+                                  planItem.id === 'ultra' ? "bg-violet-500/15" : "bg-amber-500/10"
+                                )}
+                              />
+                            )}
+
+                            {isCurrent ? (
+                              <div className="absolute top-3 right-3 px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 rounded-md text-[10px] font-bold">
+                                {tSettings.account.currentPlan}
+                              </div>
+                            ) : planItem.badge ? (
+                              <div
+                                className={cn(
+                                  "absolute top-3 right-3 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-sm",
+                                  planItem.id === 'ultra'
+                                    ? "bg-gradient-to-r from-violet-600 to-indigo-600 text-white"
+                                    : planItem.id === 'pro'
+                                      ? "bg-gradient-to-r from-amber-500 to-indigo-500 text-white"
+                                      : "bg-sky-500/20 text-sky-300 border border-sky-400/30"
+                                )}
+                              >
+                                {planItem.badge[settings.language]}
+                              </div>
+                            ) : null}
+
+                            <div className="space-y-3">
+                              <div className="flex items-start gap-2.5 pr-16">
+                                <div
+                                  className={cn(
+                                    "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-base shadow-md",
+                                    planItem.id === 'ultra'
+                                      ? "bg-gradient-to-tr from-violet-600 to-indigo-600 text-white"
+                                      : planItem.id === 'pro'
+                                        ? "bg-gradient-to-tr from-amber-500 to-indigo-600 text-white"
+                                        : planItem.id === 'plus'
+                                          ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
+                                          : "bg-white/5 text-gray-400"
+                                  )}
+                                >
+                                  {planItem.id === 'free' ? <UserIcon size={16} /> : <Crown size={16} />}
+                                </div>
+                                <div>
+                                  <h5 className="text-white font-bold text-base flex items-center gap-1.5">
+                                    <span>{planItem.name} {planItem.emoji}</span>
+                                  </h5>
+                                  <p className="text-xs text-gray-400">{planItem.subtitle[settings.language]}</p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-baseline justify-between gap-2 pt-1">
+                                <span className="text-xl font-black text-white tracking-tight">
+                                  {planItem.priceLabel[settings.language]}
+                                </span>
+                                <span className="text-[11px] text-gray-400">
+                                  {planItem.monthlyHint[settings.language]}
+                                </span>
+                              </div>
+
+                              <div className="space-y-2 pt-2.5 border-t border-white/10 text-xs text-gray-200">
+                                {planItem.features[settings.language].map((feat, idx) => {
+                                  const isLockedVideoLine = !planItem.videoIncluded && idx === planItem.features[settings.language].length - 1;
+                                  return (
+                                    <div key={idx} className="flex items-start gap-2">
+                                      {isLockedVideoLine ? (
+                                        <Lock size={13} className="text-gray-500 shrink-0 mt-0.5" />
+                                      ) : (
+                                        <Check
+                                          size={14}
+                                          className={cn(
+                                            "shrink-0 mt-0.5",
+                                            planItem.id === 'ultra'
+                                              ? "text-violet-400"
+                                              : planItem.id === 'pro'
+                                                ? "text-emerald-400"
+                                                : planItem.id === 'plus'
+                                                  ? "text-sky-400"
+                                                  : "text-indigo-400"
+                                          )}
+                                        />
+                                      )}
+                                      <span className={cn(isLockedVideoLine ? "text-gray-500" : "text-gray-200")}>
+                                        {feat}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {isCurrent ? (
+                              <div className="w-full py-2.5 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold text-center flex items-center justify-center gap-1.5">
+                                <ShieldCheck size={14} />
+                                {planItem.id === 'free'
+                                  ? tSettings.account.freeStatus
+                                  : settings.language === 'en'
+                                    ? `${planItem.name} Active`
+                                    : `${planItem.name} Actif`}
+                              </div>
+                            ) : isAlreadyIncluded || planItem.id === 'free' ? (
+                              <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-center text-xs text-gray-400">
+                                {settings.language === 'en' ? 'Included in your current tier' : 'Inclus dans votre formule actuelle'}
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => openUpgradeModalForPlan(planItem.id)}
+                                className={cn(
+                                  "w-full py-2.5 px-4 rounded-xl font-black text-xs transition-all active:scale-[0.98] shadow-lg flex items-center justify-center gap-2 cursor-pointer",
+                                  planItem.id === 'ultra'
+                                    ? "bg-gradient-to-r from-violet-600 hover:from-violet-500 to-indigo-600 hover:to-indigo-500 text-white shadow-violet-500/20"
+                                    : planItem.id === 'pro'
+                                      ? "bg-gradient-to-r from-amber-500 hover:from-amber-400 to-indigo-600 hover:to-indigo-500 text-black shadow-amber-500/20"
+                                      : "bg-sky-500 hover:bg-sky-400 text-black shadow-sky-500/20"
+                                )}
+                              >
+                                <Crown size={14} />
+                                <span>
+                                  {settings.language === 'en'
+                                    ? `Choose ${planItem.name} (${planItem.priceLabel.en})`
+                                    : `Passer au ${planItem.name} (${planItem.priceLabel.fr})`}
+                                </span>
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {/* Console d'Administration Fondateur pour M. Tchoumi Chilic Vitrice */}
@@ -1768,6 +2000,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                             onChange={(e) => setFounderTargetEmail(e.target.value)}
                             className="flex-1 px-4 py-2.5 bg-black/40 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-400 placeholder-gray-500"
                           />
+                          <select
+                            value={founderTargetPlan}
+                            onChange={(e) => setFounderTargetPlan(e.target.value as 'plus' | 'pro' | 'ultra')}
+                            className="px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-xs font-bold text-white outline-none focus:border-amber-400 cursor-pointer"
+                          >
+                            <option value="plus">Plus (5 900 FCFA)</option>
+                            <option value="pro">Pro (12 559 FCFA)</option>
+                            <option value="ultra">Ultra (29 900 FCFA)</option>
+                          </select>
                           <button
                             onClick={() => handleFounderActivatePro()}
                             disabled={isSavingProUser || !founderTargetEmail.trim()}
@@ -1778,7 +2019,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           </button>
                         </div>
 
-                        {/* Liste des utilisateurs Pro enregistrés */}
+                        {/* Liste des utilisateurs abonnés enregistrés */}
                         <div className="pt-3 border-t border-white/10 space-y-2">
                           <h5 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
                             {tSettings.account.founderAccountsTitle} ({proUsersList.filter(u => u.status === 'active').length})
@@ -1787,40 +2028,43 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                             <p className="text-xs text-gray-500 italic">{tSettings.account.noAccounts}</p>
                           ) : (
                             <div className="max-h-48 overflow-y-auto space-y-1.5 scrollbar-thin">
-                              {proUsersList.map((proUser) => (
-                                <div
-                                  key={proUser.id || proUser.email}
-                                  className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-xs"
-                                >
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <span className={cn(
-                                      "w-2 h-2 rounded-full shrink-0",
-                                      proUser.status === 'active' ? "bg-emerald-400 shadow-sm shadow-emerald-400/50" : "bg-gray-500"
-                                    )} />
-                                    <span className="font-mono text-gray-200 truncate">{proUser.email}</span>
-                                    <span className="text-[10px] text-gray-500">
-                                      {proUser.status === 'active' ? '• Pro' : '• Off'}
-                                    </span>
+                              {proUsersList.map((proUser) => {
+                                const assignedPlan = proUser.plan || 'pro';
+                                return (
+                                  <div
+                                    key={proUser.id || proUser.email}
+                                    className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className={cn(
+                                        "w-2 h-2 rounded-full shrink-0",
+                                        proUser.status === 'active' ? "bg-emerald-400 shadow-sm shadow-emerald-400/50" : "bg-gray-500"
+                                      )} />
+                                      <span className="font-mono text-gray-200 truncate">{proUser.email}</span>
+                                      <span className="text-[10px] text-gray-400 uppercase font-semibold">
+                                        {proUser.status === 'active' ? `• ${assignedPlan}` : '• Off'}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {proUser.status === 'active' ? (
+                                        <button
+                                          onClick={() => handleFounderDeactivatePro(proUser.email)}
+                                          className="px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-[10px] font-semibold border border-red-500/20 transition-colors"
+                                        >
+                                          {tSettings.account.founderDeactivateBtn}
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={() => handleFounderActivatePro(proUser.email, assignedPlan)}
+                                          className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg text-[10px] font-semibold border border-emerald-500/20 transition-colors"
+                                        >
+                                          {tSettings.account.founderReactivateBtn}
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    {proUser.status === 'active' ? (
-                                      <button
-                                        onClick={() => handleFounderDeactivatePro(proUser.email)}
-                                        className="px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-[10px] font-semibold border border-red-500/20 transition-colors"
-                                      >
-                                        {tSettings.account.founderDeactivateBtn}
-                                      </button>
-                                    ) : (
-                                      <button
-                                        onClick={() => handleFounderActivatePro(proUser.email)}
-                                        className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg text-[10px] font-semibold border border-emerald-500/20 transition-colors"
-                                      >
-                                        {tSettings.account.founderReactivateBtn}
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -2198,9 +2442,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <div>
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/30 text-amber-300 text-[10px] font-bold uppercase tracking-wider mb-1">
                     <Sparkles size={11} />
-                    {tProModal.badge}
+                    {tProModal.badge} • {selectedUpgradePlanDef.name}
                   </div>
-                  <h3 className="text-xl font-black text-white tracking-tight">{tProModal.title}</h3>
+                  <h3 className="text-xl font-black text-white tracking-tight">
+                    {selectedUpgradePlanDef.name} {selectedUpgradePlanDef.emoji} — {selectedUpgradePlanDef.priceLabel[settings.language]}
+                  </h3>
                 </div>
               </div>
 
@@ -2230,7 +2476,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               {/* Actions & Bouton WhatsApp */}
               <div className="space-y-3">
                 <a
-                  href={`https://wa.me/237677201028?text=${encodeURIComponent(tProModal.waMessage(userEmail))}`}
+                  href={`https://wa.me/237677201028?text=${encodeURIComponent(
+                    tProModal.waMessage(
+                      userEmail,
+                      selectedUpgradePlanDef.name,
+                      selectedUpgradePlanDef.priceLabel[settings.language]
+                    )
+                  )}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center gap-2.5 w-full py-3.5 px-6 rounded-xl bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold text-sm shadow-lg shadow-[#25D366]/25 hover:shadow-[#25D366]/40 transition-all active:scale-[0.98] cursor-pointer"

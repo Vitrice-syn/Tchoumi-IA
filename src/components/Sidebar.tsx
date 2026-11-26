@@ -447,9 +447,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="truncate text-[13.5px] font-medium text-gray-100">
               {user ? (user.displayName || user.email?.split('@')[0]) : t.signIn}
             </span>
-            {plan === 'pro' && (
-              <span className="text-[10px] font-semibold text-amber-400 shrink-0">
-                {t.proBadge}
+            {plan && plan !== 'free' && (
+              <span
+                className={cn(
+                  "text-[10px] font-semibold shrink-0",
+                  plan === 'ultra'
+                    ? "text-violet-300"
+                    : plan === 'pro'
+                      ? "text-amber-400"
+                      : "text-sky-400"
+                )}
+              >
+                {plan === 'ultra' ? t.ultraBadge : plan === 'pro' ? t.proBadge : t.plusBadge}
               </span>
             )}
           </div>

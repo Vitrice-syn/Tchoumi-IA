@@ -39,7 +39,7 @@ export interface ApiKeys {
 
 export type ModelProvider = 'gemini';
 
-export type UserPlan = 'free' | 'pro';
+export type UserPlan = 'free' | 'plus' | 'pro' | 'ultra';
 
 export type Language = 'fr' | 'en';
 
