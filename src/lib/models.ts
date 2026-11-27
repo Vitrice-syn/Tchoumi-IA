@@ -217,14 +217,14 @@ export const TCHOUMI_PLANS: SubscriptionPlanDef[] = [
     id: 'plus',
     name: 'Plan Plus',
     emoji: '⚡',
-    priceFcfa: 5900,
+    priceFcfa: 2900,
     priceLabel: {
-      fr: '5 900 FCFA / an',
-      en: '5,900 FCFA / year',
+      fr: '2 900 FCFA / mois',
+      en: '2,900 FCFA / month',
     },
     monthlyHint: {
-      fr: 'Soit ~490 FCFA / mois',
-      en: 'Approx. 490 FCFA / month',
+      fr: 'Facturation mensuelle • Sans engagement',
+      en: 'Monthly billing • Cancel anytime',
     },
     subtitle: {
       fr: 'Pour étudiants, créateurs & développeurs',
@@ -259,12 +259,12 @@ export const TCHOUMI_PLANS: SubscriptionPlanDef[] = [
     emoji: '🚀',
     priceFcfa: 12559,
     priceLabel: {
-      fr: '12 559 FCFA / an',
-      en: '12,559 FCFA / year',
+      fr: '12 559 FCFA / mois',
+      en: '12,559 FCFA / month',
     },
     monthlyHint: {
-      fr: 'Soit ~1 045 FCFA / mois',
-      en: 'Approx. 1,045 FCFA / month',
+      fr: 'Facturation mensuelle • Vidéo IA incluse',
+      en: 'Monthly billing • AI Video included',
     },
     subtitle: {
       fr: 'Puissance maximale & Studio Vidéo IA',
@@ -300,12 +300,12 @@ export const TCHOUMI_PLANS: SubscriptionPlanDef[] = [
     emoji: '👑',
     priceFcfa: 29900,
     priceLabel: {
-      fr: '29 900 FCFA / an',
-      en: '29,900 FCFA / year',
+      fr: '29 900 FCFA / mois',
+      en: '29,900 FCFA / month',
     },
     monthlyHint: {
-      fr: 'Soit ~2 490 FCFA / mois',
-      en: 'Approx. 2,490 FCFA / month',
+      fr: 'Facturation mensuelle • Accès VIP',
+      en: 'Monthly billing • VIP access',
     },
     subtitle: {
       fr: 'Souveraineté IA pour entreprises & cliniques',

@@ -11,15 +11,17 @@ import {
   Layers, Eye, EyeOff, RefreshCw, FileSpreadsheet, Mail, MessageSquare,
   Crown, Zap, ShieldCheck, Star, CreditCard
 } from 'lucide-react';
-import { Message, AppSettings, ModelProvider, Attachment, ConnectedApp, UserPlan } from '../types';
+import { Message, AppSettings, ModelProvider, Attachment, ConnectedApp, UserPlan, SubscriptionRequest } from '../types';
 import { MessageItem } from './MessageItem';
 import { AI_NAME, AI_AVATAR_URL } from '../constants';
 import { translations } from '../lib/translations';
 import { TCHOUMI_MODELS, TCHOUMI_PLANS, getModelById, getPlanById, hasPlanAccess } from '../lib/models';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
-import { db } from '../firebase';
-import { doc, setDoc, deleteDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db, sanitizeForFirestore } from '../firebase';
+import { doc, setDoc, deleteDoc, collection, onSnapshot } from 'firebase/firestore';
+import { SubscriptionRequestModal } from './SubscriptionRequestModal';
+import { FounderAdminDashboard, ProUserRecord, RegisteredUserRecord } from './FounderAdminDashboard';
 
 interface ChatAreaProps {
   messages: Message[];
@@ -27,6 +29,7 @@ interface ChatAreaProps {
   userPhotoURL?: string | null;
   userEmail?: string | null;
   userDisplayName?: string | null;
+  userUid?: string | null;
   isLoggedIn?: boolean;
   settingsCategory?: string;
   onSettingsCategoryChange?: (category: string) => void;
@@ -56,6 +59,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   userPhotoURL,
   userEmail,
   userDisplayName,
+  userUid,
   isLoggedIn,
   settingsCategory: settingsCategoryProp,
   onSettingsCategoryChange,
@@ -89,6 +93,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
   const [showMobileDetail, setShowMobileDetail] = useState(false);
   const [showProUpgradeModal, setShowProUpgradeModal] = useState(false);
+  const [showAdminPage, setShowAdminPage] = useState(false);
   const [upgradeTargetPlan, setUpgradeTargetPlan] = useState<UserPlan>('pro');
   const [upgradeNotification, setUpgradeNotification] = useState<string | null>(null);
   const [showModelMenu, setShowModelMenu] = useState(false);
@@ -149,10 +154,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isSubmittingAppConnect, setIsSubmittingAppConnect] = useState(false);
   
   // Founder management state
-  const isFounder = userEmail === 'ronysite4@gmail.com';
-  const [founderTargetEmail, setFounderTargetEmail] = useState('');
-  const [founderTargetPlan, setFounderTargetPlan] = useState<'plus' | 'pro' | 'ultra'>('pro');
-  const [proUsersList, setProUsersList] = useState<{ id: string; email: string; status: string; plan?: 'plus' | 'pro' | 'ultra'; activatedAt?: number }[]>([]);
+  const isFounder = userEmail?.toLowerCase().trim() === 'ronysite4@gmail.com';
+  const [proUsersList, setProUsersList] = useState<ProUserRecord[]>([]);
+  const [registeredUsersList, setRegisteredUsersList] = useState<RegisteredUserRecord[]>([]);
+  const [subscriptionRequests, setSubscriptionRequests] = useState<SubscriptionRequest[]>([]);
   const [isSavingProUser, setIsSavingProUser] = useState(false);
   const [founderActionMsg, setFounderActionMsg] = useState<string | null>(null);
 
@@ -163,49 +168,136 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const recognitionRef = useRef<any>(null);
   const t = translations[settings.language].chat;
   const tSettings = translations[settings.language].settings;
-  const tProModal = translations[settings.language].proModal;
 
-  // Listen to Pro users collection if Founder
+  const pendingRequestsCount = subscriptionRequests.filter((r) => r.status === 'pending').length;
+
+  // Listen to Pro users, registered users, and subscription requests collections if Founder
   useEffect(() => {
     if (!isFounder) return;
+    const unsubs: (() => void)[] = [];
     try {
-      const q = collection(db, 'pro_users');
-      const unsub = onSnapshot(q, (snapshot) => {
-        const list: { id: string; email: string; status: string; plan?: 'plus' | 'pro' | 'ultra'; activatedAt?: number }[] = [];
-        snapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() } as any);
-        });
-        setProUsersList(list);
-      }, (err) => {
-        console.error("Error loading pro users:", err);
-      });
-      return () => unsub();
+      const qPro = collection(db, 'pro_users');
+      unsubs.push(
+        onSnapshot(qPro, (snapshot) => {
+          const list: ProUserRecord[] = [];
+          snapshot.forEach((docSnap) => {
+            list.push({ id: docSnap.id, ...docSnap.data() } as ProUserRecord);
+          });
+          setProUsersList(list);
+        }, (err) => {
+          console.error("Error loading pro users:", err);
+        })
+      );
+
+      const qUsers = collection(db, 'users');
+      unsubs.push(
+        onSnapshot(qUsers, (snapshot) => {
+          const users: RegisteredUserRecord[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const rawLastLogin = data?.lastLogin;
+            const lastLoginMs =
+              typeof rawLastLogin?.toMillis === 'function'
+                ? rawLastLogin.toMillis()
+                : typeof rawLastLogin === 'number'
+                  ? rawLastLogin
+                  : undefined;
+            if (data?.email) {
+              users.push({
+                uid: docSnap.id,
+                email: String(data.email),
+                displayName: data.displayName ? String(data.displayName) : undefined,
+                photoURL: data.photoURL ? String(data.photoURL) : undefined,
+                lastLoginMs,
+              });
+            }
+          });
+          users.sort((a, b) => (b.lastLoginMs || 0) - (a.lastLoginMs || 0));
+          setRegisteredUsersList(users);
+        }, (err) => {
+          console.error("Error loading registered users:", err);
+        })
+      );
+
+      const qRequests = collection(db, 'subscription_requests');
+      unsubs.push(
+        onSnapshot(qRequests, (snapshot) => {
+          const reqs: SubscriptionRequest[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            reqs.push({
+              id: docSnap.id,
+              fullName: String(data?.fullName || ''),
+              email: String(data?.email || ''),
+              phone: String(data?.phone || ''),
+              paymentMethod: data?.paymentMethod,
+              plan: data?.plan === 'plus' || data?.plan === 'ultra' ? data.plan : 'pro',
+              priceLabel: data?.priceLabel,
+              notes: data?.notes,
+              status:
+                data?.status === 'approved' || data?.status === 'rejected'
+                  ? data.status
+                  : 'pending',
+              uid: data?.uid,
+              createdAt: typeof data?.createdAt === 'number' ? data.createdAt : 0,
+              processedAt: data?.processedAt,
+            });
+          });
+          reqs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          setSubscriptionRequests(reqs);
+        }, (err) => {
+          console.error("Error loading subscription requests:", err);
+        })
+      );
     } catch (e) {
       console.error(e);
     }
+    return () => {
+      unsubs.forEach((u) => u());
+    };
   }, [isFounder]);
 
-  const handleFounderActivatePro = async (emailToActivate?: string, planOverride?: 'plus' | 'pro' | 'ultra') => {
-    const target = (emailToActivate || founderTargetEmail).toLowerCase().trim();
-    const planToAssign = planOverride || founderTargetPlan;
+  const handleFounderActivatePro = async (
+    emailToActivate: string,
+    planToAssign: 'plus' | 'pro' | 'ultra' = 'pro',
+    requestId?: string,
+    meta?: { fullName?: string; phone?: string }
+  ) => {
+    const target = emailToActivate.toLowerCase().trim();
     if (!target || !target.includes('@')) {
-      setFounderActionMsg("Veuillez saisir une adresse email valide.");
+      setFounderActionMsg("Veuillez saisir une adresse e-mail valide.");
       return;
     }
     setIsSavingProUser(true);
     try {
-      await setDoc(doc(db, 'pro_users', target), {
-        email: target,
-        status: 'active',
-        plan: planToAssign,
-        activatedAt: Date.now(),
-        activatedBy: 'founder'
-      }, { merge: true });
+      await setDoc(
+        doc(db, 'pro_users', target),
+        sanitizeForFirestore({
+          email: target,
+          status: 'active',
+          plan: planToAssign,
+          activatedAt: Date.now(),
+          activatedBy: 'founder',
+          ...(meta?.fullName ? { fullName: meta.fullName } : {}),
+          ...(meta?.phone ? { phone: meta.phone } : {}),
+        }),
+        { merge: true }
+      );
+      if (requestId) {
+        await setDoc(
+          doc(db, 'subscription_requests', requestId),
+          {
+            status: 'approved',
+            plan: planToAssign,
+            processedAt: Date.now(),
+          },
+          { merge: true }
+        );
+      }
       setFounderActionMsg(`Plan ${planToAssign.toUpperCase()} activé avec succès pour ${target} ! 🚀`);
-      if (!emailToActivate) setFounderTargetEmail('');
       setTimeout(() => setFounderActionMsg(null), 4000);
     } catch (err: any) {
-      setFounderActionMsg(`Erreur : ${err.message || 'Impossible d\'activer le plan'}`);
+      setFounderActionMsg(`Erreur : ${err.message || "Impossible d'activer le plan"}`);
     } finally {
       setIsSavingProUser(false);
     }
@@ -224,6 +316,36 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       setTimeout(() => setFounderActionMsg(null), 4000);
     } catch (err: any) {
       setFounderActionMsg(`Erreur : ${err.message || 'Impossible de désactiver'}`);
+    } finally {
+      setIsSavingProUser(false);
+    }
+  };
+
+  const handleFounderRejectRequest = async (requestId: string) => {
+    setIsSavingProUser(true);
+    try {
+      await setDoc(
+        doc(db, 'subscription_requests', requestId),
+        { status: 'rejected', processedAt: Date.now() },
+        { merge: true }
+      );
+      setFounderActionMsg('Demande marquée comme refusée.');
+      setTimeout(() => setFounderActionMsg(null), 3500);
+    } catch (err: any) {
+      setFounderActionMsg(`Erreur : ${err.message || 'Impossible de refuser la demande'}`);
+    } finally {
+      setIsSavingProUser(false);
+    }
+  };
+
+  const handleFounderDeleteRequest = async (requestId: string) => {
+    setIsSavingProUser(true);
+    try {
+      await deleteDoc(doc(db, 'subscription_requests', requestId));
+      setFounderActionMsg('Demande supprimée.');
+      setTimeout(() => setFounderActionMsg(null), 3000);
+    } catch (err: any) {
+      setFounderActionMsg(`Erreur : ${err.message || 'Impossible de supprimer la demande'}`);
     } finally {
       setIsSavingProUser(false);
     }
@@ -661,6 +783,27 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               <span className="hidden sm:inline">{settings.language === 'en' ? "Voice" : "Vocal"}</span>
             </button>
           )}
+          {isFounder && (
+            <button
+              type="button"
+              onClick={() => setShowAdminPage(true)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors cursor-pointer",
+                showAdminPage
+                  ? "bg-amber-400 text-black border-amber-300"
+                  : "bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/35"
+              )}
+              title={settings.language === 'en' ? 'Open Admin Dashboard' : "Ouvrir l'Interface Admin"}
+            >
+              <Crown size={14} />
+              <span className="hidden sm:inline">Admin</span>
+              {pendingRequestsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-black leading-tight">
+                  {pendingRequestsCount}
+                </span>
+              )}
+            </button>
+          )}
           <button 
             onClick={() => {
               if (activeView === 'settings' && settingsCategory === 'account') {
@@ -704,6 +847,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             {/* Scrollable Categories List */}
             <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-1.5 scrollbar-thin scrollbar-thumb-white/20 hover:scrollbar-thumb-white/30 scrollbar-track-transparent">
               {[
+                ...(isFounder
+                  ? [
+                      {
+                        id: 'admin',
+                        icon: Crown,
+                        label: settings.language === 'en' ? 'Admin Dashboard' : 'Administration',
+                        badgeCount: pendingRequestsCount,
+                      },
+                    ]
+                  : []),
                 { id: 'analytics', icon: BarChart3, label: tSettings.categories.analytics },
                 { id: 'apps', icon: LayoutGrid, label: tSettings.categories.apps },
                 { id: 'medical', icon: Brain, label: tSettings.categories.medical },
@@ -712,23 +865,38 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 { id: 'security', icon: Shield, label: tSettings.categories.security },
                 { id: 'data', icon: Database, label: tSettings.categories.data },
                 { id: 'account', icon: UserIcon, label: tSettings.categories.account },
-              ].map((cat) => (
+              ].map((cat: any) => (
                 <button
                   key={cat.id}
                   onClick={() => {
+                    if (cat.id === 'admin') {
+                      setShowAdminPage(true);
+                      return;
+                    }
                     setSettingsCategory(cat.id);
                     setShowMobileDetail(true);
                   }}
                   className={cn(
                     "w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-medium transition-all group shrink-0",
-                    settingsCategory === cat.id ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20" : "text-gray-400 hover:bg-white/5 hover:text-white"
+                    settingsCategory === cat.id && cat.id !== 'admin'
+                      ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
+                      : cat.id === 'admin'
+                        ? "text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25"
+                        : "text-gray-400 hover:bg-white/5 hover:text-white"
                   )}
                 >
                   <div className="flex items-center gap-3 truncate">
                     <cat.icon size={18} className="shrink-0" />
                     <span className="truncate">{cat.label}</span>
                   </div>
-                  <ChevronRight size={14} className="md:hidden opacity-50 shrink-0" />
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {cat.badgeCount > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-black">
+                        {cat.badgeCount}
+                      </span>
+                    )}
+                    <ChevronRight size={14} className="md:hidden opacity-50 shrink-0" />
+                  </div>
                 </button>
               ))}
             </div>
@@ -1966,108 +2134,36 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       })}
                     </div>
 
-                    {/* Console d'Administration Fondateur pour M. Tchoumi Chilic Vitrice */}
+                    {/* Raccourci vers l'Interface Admin Fondateur */}
                     {isFounder && (
-                      <div className="mt-8 p-6 bg-gradient-to-b from-[#131322] to-[#0d0e17] rounded-2xl border border-amber-500/30 shadow-xl space-y-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center text-black font-black shadow-md">
+                      <div className="mt-8 p-5 bg-gradient-to-r from-[#171528] to-[#0f101a] rounded-2xl border border-amber-500/35 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3.5">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center text-black font-black shadow-md shrink-0">
                             <Crown size={20} className="fill-black" />
                           </div>
                           <div>
-                            <h4 className="text-base font-black text-white flex items-center gap-2">
+                            <h4 className="text-sm font-black text-white flex items-center gap-2">
                               {tSettings.account.founderConsole}
-                              <span className="px-2 py-0.5 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[10px] font-bold">
-                                M. Tchoumi Chilic Vitrice
-                              </span>
+                              {pendingRequestsCount > 0 && (
+                                <span className="px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-black">
+                                  {pendingRequestsCount} {settings.language === 'fr' ? 'en attente' : 'pending'}
+                                </span>
+                              )}
                             </h4>
-                            <p className="text-xs text-gray-400">
-                              {tSettings.account.founderSub}
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {settings.language === 'fr'
+                                ? 'Gérez toutes les demandes clients, utilisateurs Google et activations en un clic.'
+                                : 'Manage all client requests, Google users, and one-click plan activations.'}
                             </p>
                           </div>
                         </div>
-
-                        {founderActionMsg && (
-                          <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs font-semibold text-amber-300">
-                            {founderActionMsg}
-                          </div>
-                        )}
-
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <input
-                            type="email"
-                            placeholder={tSettings.account.founderInputPlaceholder}
-                            value={founderTargetEmail}
-                            onChange={(e) => setFounderTargetEmail(e.target.value)}
-                            className="flex-1 px-4 py-2.5 bg-black/40 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-400 placeholder-gray-500"
-                          />
-                          <select
-                            value={founderTargetPlan}
-                            onChange={(e) => setFounderTargetPlan(e.target.value as 'plus' | 'pro' | 'ultra')}
-                            className="px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-xs font-bold text-white outline-none focus:border-amber-400 cursor-pointer"
-                          >
-                            <option value="plus">Plus (5 900 FCFA)</option>
-                            <option value="pro">Pro (12 559 FCFA)</option>
-                            <option value="ultra">Ultra (29 900 FCFA)</option>
-                          </select>
-                          <button
-                            onClick={() => handleFounderActivatePro()}
-                            disabled={isSavingProUser || !founderTargetEmail.trim()}
-                            className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 text-black font-black text-xs rounded-xl shadow-md transition-all active:scale-[0.98] flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-                          >
-                            <Crown size={14} className="fill-black text-black" />
-                            <span>{isSavingProUser ? "..." : tSettings.account.founderActivateBtn}</span>
-                          </button>
-                        </div>
-
-                        {/* Liste des utilisateurs abonnés enregistrés */}
-                        <div className="pt-3 border-t border-white/10 space-y-2">
-                          <h5 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                            {tSettings.account.founderAccountsTitle} ({proUsersList.filter(u => u.status === 'active').length})
-                          </h5>
-                          {proUsersList.length === 0 ? (
-                            <p className="text-xs text-gray-500 italic">{tSettings.account.noAccounts}</p>
-                          ) : (
-                            <div className="max-h-48 overflow-y-auto space-y-1.5 scrollbar-thin">
-                              {proUsersList.map((proUser) => {
-                                const assignedPlan = proUser.plan || 'pro';
-                                return (
-                                  <div
-                                    key={proUser.id || proUser.email}
-                                    className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-xs"
-                                  >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <span className={cn(
-                                        "w-2 h-2 rounded-full shrink-0",
-                                        proUser.status === 'active' ? "bg-emerald-400 shadow-sm shadow-emerald-400/50" : "bg-gray-500"
-                                      )} />
-                                      <span className="font-mono text-gray-200 truncate">{proUser.email}</span>
-                                      <span className="text-[10px] text-gray-400 uppercase font-semibold">
-                                        {proUser.status === 'active' ? `• ${assignedPlan}` : '• Off'}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      {proUser.status === 'active' ? (
-                                        <button
-                                          onClick={() => handleFounderDeactivatePro(proUser.email)}
-                                          className="px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-[10px] font-semibold border border-red-500/20 transition-colors"
-                                        >
-                                          {tSettings.account.founderDeactivateBtn}
-                                        </button>
-                                      ) : (
-                                        <button
-                                          onClick={() => handleFounderActivatePro(proUser.email, assignedPlan)}
-                                          className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg text-[10px] font-semibold border border-emerald-500/20 transition-colors"
-                                        >
-                                          {tSettings.account.founderReactivateBtn}
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowAdminPage(true)}
+                          className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-black font-black text-xs rounded-xl shadow-md transition-all cursor-pointer shrink-0"
+                        >
+                          {settings.language === 'fr' ? "Ouvrir l'Interface Admin" : 'Open Admin Dashboard'}
+                        </button>
                       </div>
                     )}
                   </div>
@@ -2411,99 +2507,34 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       </>
       )}
 
-      {/* MODAL DE CONFIRMATION PASSAGE AU PLAN PRO VIA WHATSAPP */}
-      <AnimatePresence>
-        {showProUpgradeModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-[#0e0f17] border border-amber-500/30 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl shadow-amber-500/10 relative overflow-hidden text-left"
-            >
-              {/* Effet lumineux d'ambiance */}
-              <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-bl from-amber-500/20 via-indigo-500/10 to-transparent rounded-full blur-3xl pointer-events-none" />
-              <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+      {/* FORMULAIRE DE DEMANDE D'ABONNEMENT (PAGE COMPLÈTE) */}
+      <SubscriptionRequestModal
+        isOpen={showProUpgradeModal}
+        initialPlan={upgradeTargetPlan}
+        language={settings.language}
+        userEmail={userEmail}
+        userDisplayName={userDisplayName}
+        userUid={userUid}
+        onClose={() => setShowProUpgradeModal(false)}
+      />
 
-              {/* Bouton Fermer */}
-              <button
-                onClick={() => setShowProUpgradeModal(false)}
-                className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-full transition-colors cursor-pointer"
-                title={tProModal.closeBtn}
-              >
-                <X size={18} />
-              </button>
-
-              {/* En-tête */}
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-amber-500/25 ring-2 ring-amber-400/30">
-                  <Crown size={24} className="text-black fill-black" />
-                </div>
-                <div>
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/30 text-amber-300 text-[10px] font-bold uppercase tracking-wider mb-1">
-                    <Sparkles size={11} />
-                    {tProModal.badge} • {selectedUpgradePlanDef.name}
-                  </div>
-                  <h3 className="text-xl font-black text-white tracking-tight">
-                    {selectedUpgradePlanDef.name} {selectedUpgradePlanDef.emoji} — {selectedUpgradePlanDef.priceLabel[settings.language]}
-                  </h3>
-                </div>
-              </div>
-
-              {/* Message d'explication */}
-              <p className="text-sm text-gray-300 leading-relaxed mb-4">
-                {tProModal.description}
-              </p>
-
-              {/* Affichage de l'e-mail du compte */}
-              {userEmail ? (
-                <div className="p-3.5 bg-amber-400/[0.06] border border-amber-400/20 rounded-2xl mb-5 flex items-center justify-between text-xs text-gray-200">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <Mail size={16} className="text-amber-400 shrink-0" />
-                    <span className="text-gray-400 truncate">{tProModal.accountToActivate}</span>
-                    <span className="font-mono text-amber-300 font-bold truncate">{userEmail}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3.5 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl mb-5 text-xs text-indigo-300 flex items-center gap-2.5">
-                  <UserIcon size={16} className="text-indigo-400 shrink-0" />
-                  <span>
-                    {tProModal.guestNotice}
-                  </span>
-                </div>
-              )}
-
-              {/* Actions & Bouton WhatsApp */}
-              <div className="space-y-3">
-                <a
-                  href={`https://wa.me/237677201028?text=${encodeURIComponent(
-                    tProModal.waMessage(
-                      userEmail,
-                      selectedUpgradePlanDef.name,
-                      selectedUpgradePlanDef.priceLabel[settings.language]
-                    )
-                  )}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2.5 w-full py-3.5 px-6 rounded-xl bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold text-sm shadow-lg shadow-[#25D366]/25 hover:shadow-[#25D366]/40 transition-all active:scale-[0.98] cursor-pointer"
-                >
-                  <svg className="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24">
-                    <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.599 2.679-.702c.97.53 1.77.818 2.781.819h.005c3.181 0 5.767-2.586 5.768-5.766 0-3.18-2.587-5.767-5.773-5.767zm7.656 5.766c-.002 4.22-3.434 7.652-7.656 7.652-.001 0-.002 0-.003 0-1.309 0-2.589-.351-3.702-.994l-4.135 1.084 1.104-4.033c-.707-1.166-1.08-2.508-1.079-3.882.002-4.221 3.435-7.653 7.657-7.653 4.221 0 7.654 3.433 7.654 7.653z" fillRule="evenodd" clipRule="evenodd"/>
-                  </svg>
-                  <span>{tProModal.whatsappBtn}</span>
-                </a>
-
-                <button
-                  onClick={() => setShowProUpgradeModal(false)}
-                  className="w-full py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white text-xs font-semibold transition-colors border border-white/10 text-center cursor-pointer"
-                >
-                  {tProModal.closeBtn}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* INTERFACE ADMIN FONDATEUR (PAGE COMPLÈTE) */}
+      {isFounder && (
+        <FounderAdminDashboard
+          isOpen={showAdminPage}
+          onClose={() => setShowAdminPage(false)}
+          language={settings.language}
+          subscriptionRequests={subscriptionRequests}
+          proUsersList={proUsersList}
+          registeredUsersList={registeredUsersList}
+          isSaving={isSavingProUser}
+          actionMessage={founderActionMsg}
+          onActivatePlan={handleFounderActivatePro}
+          onDeactivatePro={handleFounderDeactivatePro}
+          onRejectRequest={handleFounderRejectRequest}
+          onDeleteRequest={handleFounderDeleteRequest}
+        />
+      )}
 
       {/* MODAL DE CONNEXION D'APPLICATION (TCHOUMI CONNECT) */}
       <AnimatePresence>

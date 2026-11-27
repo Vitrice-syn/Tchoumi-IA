@@ -72,6 +72,94 @@ app.get("/api/config", (_req, res) => {
   });
 });
 
+// Image Generation Proxy (supports authenticated watermark-free gen.pollinations.ai and filters busy cards)
+app.get("/api/image/render", async (req, res) => {
+  const prompt = String(req.query.prompt || "").trim().slice(0, 1000);
+  if (!prompt) {
+    return res.status(400).json({ error: "Le prompt d'image est requis." });
+  }
+
+  const rawSeed = Number(req.query.seed);
+  const seed = Number.isFinite(rawSeed) && rawSeed > 0 ? Math.floor(rawSeed) : Math.floor(Math.random() * 1000000);
+  const encodedPrompt = encodeURIComponent(prompt);
+  const pollinationsKey = (process.env.POLLINATIONS_API_KEY || "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
+
+  const candidates: Array<{ url: string; headers?: Record<string, string> }> = pollinationsKey
+    ? [
+        {
+          url: `https://gen.pollinations.ai/image/${encodedPrompt}?model=flux&width=1024&height=1024&nologo=true&enhance=true&seed=${seed}`,
+          headers: { Authorization: `Bearer ${pollinationsKey}` },
+        },
+        {
+          url: `https://gen.pollinations.ai/image/${encodedPrompt}?model=turbo&width=1024&height=1024&nologo=true&seed=${seed}`,
+          headers: { Authorization: `Bearer ${pollinationsKey}` },
+        },
+      ]
+    : [
+        {
+          url: `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&private=true&enhance=true&seed=${seed}`,
+        },
+        {
+          url: `https://image.pollinations.ai/prompt/${encodedPrompt}?model=turbo&width=1024&height=1024&nologo=true&private=true&seed=${seed + 1}`,
+        },
+      ];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 28000);
+
+    try {
+      const upstream = await fetch(candidate.url, {
+        headers: {
+          ...(candidate.headers || {}),
+          Accept: "image/*,*/*;q=0.8",
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      const contentType = (upstream.headers.get("content-type") || "").toLowerCase();
+      const cacheControl = (upstream.headers.get("cache-control") || "").toLowerCase();
+      const retryAfter = upstream.headers.get("retry-after");
+
+      // Reject HTTP errors or Pollinations anonymous "Busy right now" placeholder responses
+      if (
+        !upstream.ok ||
+        !contentType.startsWith("image/") ||
+        (!pollinationsKey && (cacheControl.includes("no-store") || Boolean(retryAfter)))
+      ) {
+        if (i < candidates.length - 1) {
+          await new Promise((r) => setTimeout(r, 1100));
+        }
+        continue;
+      }
+
+      const arrayBuf = await upstream.arrayBuffer();
+      const buffer = Buffer.from(arrayBuf);
+      if (buffer.byteLength < 2048) {
+        continue;
+      }
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      return res.status(200).send(buffer);
+    } catch {
+      clearTimeout(timer);
+      if (i < candidates.length - 1) {
+        await new Promise((r) => setTimeout(r, 900));
+      }
+    }
+  }
+
+  return res.status(503).json({
+    error:
+      "Le générateur d'images gratuit est momentanément saturé. Veuillez réessayer dans quelques secondes (ou ajoutez une clé gratuite POLLINATIONS_API_KEY sur enter.pollinations.ai pour supprimer toute attente et tout filigrane).",
+  });
+});
+
 function extractInnerErrorDetail(errMsg: string): string {
   let msg = errMsg;
   for (let i = 0; i < 3; i++) {

@@ -24,6 +24,8 @@ export interface Message {
   timestamp: number;
   attachments?: Attachment[];
   imageUrl?: string;
+  mediaGenerating?: 'image' | 'video';
+  mediaProgress?: number;
 }
 
 export interface Chat {
@@ -40,6 +42,23 @@ export interface ApiKeys {
 export type ModelProvider = 'gemini';
 
 export type UserPlan = 'free' | 'plus' | 'pro' | 'ultra';
+
+export type PaymentMethod = 'orange_money' | 'mtn_momo' | 'card' | 'whatsapp';
+
+export interface SubscriptionRequest {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  paymentMethod?: PaymentMethod;
+  plan: 'plus' | 'pro' | 'ultra';
+  priceLabel?: string;
+  notes?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  uid?: string;
+  createdAt: number;
+  processedAt?: number;
+}
 
 export type Language = 'fr' | 'en';
 

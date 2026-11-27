@@ -40,7 +40,11 @@ export function formatFriendlyErrorMessage(rawError: unknown): string {
     msg.startsWith("Accès refusé par l'API Gemini") ||
     msg.startsWith("Clé API Gemini non configurée") ||
     msg.startsWith("Le modèle Gemini") ||
-    msg.startsWith("Limite de requêtes")
+    msg.startsWith("Limite de requêtes") ||
+    msg.startsWith("Le service d'image") ||
+    msg.startsWith("Le générateur d'images") ||
+    msg.startsWith("Impossible de générer") ||
+    msg.startsWith("Délai dépassé lors de la génération")
   ) {
     return msg;
   }
@@ -203,16 +207,30 @@ export async function callGeminiStream(
   return { text: sseAccumulated, thoughts: thoughtsAccumulated };
 }
 
-export async function generateImage(prompt: string): Promise<string> {
+export interface GenerateImageOptions {
+  signal?: AbortSignal;
+  onProgress?: (percent: number) => void;
+}
+
+export async function generateImage(
+  prompt: string,
+  options?: GenerateImageOptions
+): Promise<string> {
+  if (options?.signal?.aborted) {
+    throw new Error("Generation aborted");
+  }
+
   let cleanPrompt = prompt
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/^\/(image|imagine)\s*/i, "")
     .replace(
-      /^.*?(peux-tu\s+|pouvez-vous\s+|veuillez\s+|s'il te plaît\s+|stp\s+)?(génère|genere|générer|generer|crée|cree|créer|creer|dessine|dessiner|peins|peindre|illustre|illustrer|fais|faire|produis|produire|affiche|afficher|generate|draw|create|make|render)\s*(moi|nous|me|us)?\s*(une?\s+image|un\s+visuel|une\s+illustration|une?\s+photo|un\s+dessin|un\s+portrait|un\s+tableau|un\s+rendu|an\s+image|a\s+picture|a\s+photo|an\s+illustration)?\s*(de|d'|du|des|d'un|d'une|pour|sur|avec|about|of|showing)?\s*/i,
+      /^.*?(peux-tu\s+|pouvez-vous\s+|veuillez\s+|s'il te plaît\s+|stp\s+|je veux\s+|j'aimerais\s+)?(me\s+|nous\s+)?(g[eéèê]n[eéèê]re|g[eéèê]n[eéèê]rer|cr[eéèê]e|cr[eéèê]er|dessine|dessiner|peins|peindre|illustre|illustrer|fais|faire|fait|produis|produire|r[eé]alise|realiser|affiche|afficher|montre|montrer|donne|donner|imagine|imaginer|generate|draw|paint|create|make|render|design|show)\s*(-moi|-nous|moi|nous|me|us)?\s*(une?\s+image|un\s+visuel|une\s+illustration|une?\s+photo|un\s+dessin|un\s+portrait|un\s+tableau(?:\s+d'art)?|une\s+peinture|un\s+rendu|un\s+logo|une\s+affiche|un\s+poster|une\s+banni[eè]re|un\s+fond\s+d'écran|un\s+wallpaper|an\s+image|a\s+picture|a\s+photo|an\s+illustration|an\s+artwork|a\s+logo)?\s*(de|d'|du|des|d'un|d'une|pour|sur|avec|about|of|showing)?\s*/i,
       ""
     )
     .trim();
 
   if (!cleanPrompt || cleanPrompt.length < 2) {
-    cleanPrompt = prompt;
+    cleanPrompt = prompt.trim();
   }
 
   if (prompt.includes('"action"') && prompt.includes('"action_input"')) {
@@ -237,5 +255,81 @@ export async function generateImage(prompt: string): Promise<string> {
 
   const encodedPrompt = encodeURIComponent(cleanPrompt);
   const seed = Math.floor(Math.random() * 1000000);
-  return `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&enhance=true&seed=${seed}`;
+  const imageUrl = `/api/image/render?prompt=${encodedPrompt}&seed=${seed}`;
+
+  const onProgress = options?.onProgress;
+  let currentPct = 4;
+  onProgress?.(currentPct);
+
+  const startedAt = Date.now();
+  const progressTimer = window.setInterval(() => {
+    const elapsed = Date.now() - startedAt;
+    const simulated = Math.min(95, Math.max(4, Math.round(96 * (1 - Math.exp(-elapsed / 4200)))));
+    if (simulated > currentPct) {
+      currentPct = simulated;
+      onProgress?.(currentPct);
+    }
+  }, 160);
+
+  try {
+    const response = await fetch(imageUrl, {
+      signal: options?.signal,
+    });
+
+    if (!response.ok) {
+      let errMsg = `Le générateur d'images a répondu avec l'erreur ${response.status}.`;
+      try {
+        const errData = await response.json();
+        if (errData?.error) {
+          errMsg = String(errData.error);
+        }
+      } catch {
+        // ignore JSON parse failure
+      }
+      throw new Error(errMsg);
+    }
+
+    const contentLengthHeader = response.headers.get("content-length");
+    const totalBytes = contentLengthHeader ? Number(contentLengthHeader) : 0;
+
+    if (response.body && totalBytes > 0) {
+      const reader = response.body.getReader();
+      let receivedBytes = 0;
+      while (true) {
+        if (options?.signal?.aborted) {
+          throw new Error("Generation aborted");
+        }
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          receivedBytes += value.byteLength;
+          const downloadPct = Math.min(
+            99,
+            Math.max(currentPct, Math.round(75 + (receivedBytes / totalBytes) * 24))
+          );
+          if (downloadPct > currentPct) {
+            currentPct = downloadPct;
+            onProgress?.(currentPct);
+          }
+        }
+      }
+    } else {
+      await response.blob();
+    }
+
+    window.clearInterval(progressTimer);
+    onProgress?.(100);
+    await new Promise((r) => window.setTimeout(r, 180));
+    return imageUrl;
+  } catch (err) {
+    window.clearInterval(progressTimer);
+    if (
+      options?.signal?.aborted ||
+      (err instanceof Error &&
+        (err.name === "AbortError" || err.message === "Generation aborted"))
+    ) {
+      throw new Error("Generation aborted");
+    }
+    throw err;
+  }
 }

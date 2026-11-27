@@ -242,7 +242,7 @@ export const translations = {
         proFeature4: "Génération d'images haute définition",
         proFeature5: "Support direct avec le Fondateur",
         proActiveBadge: "Abonnement Pro Actif (Validé par le Fondateur)",
-        upgradeBtn: "Passer au Plan Pro (12 559 FCFA / an)",
+        upgradeBtn: "Passer au Plan Pro (12 559 FCFA / mois)",
         founderConsole: "Console Fondateur & Gestionnaire d'Abonnements",
         founderSub: "Activez ou modifiez la formule (Plus, Pro, Ultra) pour n'importe quelle adresse e-mail en temps réel.",
         founderInputPlaceholder: "Saisir l'e-mail du client (ex: utilisateur@gmail.com)",
@@ -263,7 +263,7 @@ export const translations = {
       founderTitle: "Fondateur & Créateur de Tchoumi IA",
       whatsappBtn: "Discuter sur WhatsApp avec le Fondateur",
       closeBtn: "Fermer",
-      waMessage: (email?: string | null, planName: string = "Tchoumi IA Pro", planPrice: string = "12 559 FCFA / an") => {
+      waMessage: (email?: string | null, planName: string = "Tchoumi IA Pro", planPrice: string = "12 559 FCFA / mois") => {
         const emailLine = email ? `\n- Identifiant / Email du compte : ${email}` : `\n- Statut du compte : Nouveau client (Email à lier)`;
         return `Bonjour M. Tchoumi Chilic Vitrice,\n\nJe vous contacte afin de souscrire à la formule ${planName}.\n\nDétails de la demande :${emailLine}\n- Formule : ${planName}\n- Tarif : ${planPrice}\n\nMerci de bien vouloir me transmettre les modalités de règlement pour activer mon compte.\n\nCordialement.`;
       },
@@ -524,7 +524,7 @@ export const translations = {
         proFeature4: "High-definition image generation",
         proFeature5: "Direct support from the Founder",
         proActiveBadge: "Pro Subscription Active (Founder Validated)",
-        upgradeBtn: "Upgrade to Pro Plan (12,559 FCFA / year)",
+        upgradeBtn: "Upgrade to Pro Plan (12,559 FCFA / month)",
         founderConsole: "Founder & Subscription Management Console",
         founderSub: "Instantly activate or update Plus, Pro, or Ultra access for any user email in real-time.",
         founderInputPlaceholder: "Enter client email (e.g. user@gmail.com)",
@@ -545,7 +545,7 @@ export const translations = {
       founderTitle: "Founder & Creator of Tchoumi AI",
       whatsappBtn: "Chat on WhatsApp with the Founder",
       closeBtn: "Close",
-      waMessage: (email?: string | null, planName: string = "Tchoumi AI Pro", planPrice: string = "12,559 FCFA / year") => {
+      waMessage: (email?: string | null, planName: string = "Tchoumi AI Pro", planPrice: string = "12,559 FCFA / month") => {
         const emailLine = email ? `\n- Account Email / ID : ${email}` : `\n- Account Status: New client (Email to be linked)`;
         return `Hello Mr. Tchoumi Chilic Vitrice,\n\nI am contacting you to subscribe to ${planName}.\n\nSubscription Details:${emailLine}\n- Plan: ${planName}\n- Price: ${planPrice}\n\nPlease provide payment instructions to finalize the activation of my access.\n\nBest regards.`;
       },

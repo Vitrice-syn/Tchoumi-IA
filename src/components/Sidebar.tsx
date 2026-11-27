@@ -106,6 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           (m) =>
             (m.attachments && m.attachments.length > 0) ||
             m.content.includes('pollinations.ai') ||
+            m.content.includes('/api/image/') ||
             m.content.includes('![')
         );
         if (!hasMedia) return false;

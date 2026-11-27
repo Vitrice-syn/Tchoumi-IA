@@ -149,6 +149,19 @@ export default function App() {
           displayName: firebaseUser.displayName,
           photoURL: firebaseUser.photoURL,
         });
+        setDoc(
+          doc(db, 'users', firebaseUser.uid),
+          sanitizeForFirestore({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            displayName: firebaseUser.displayName || '',
+            photoURL: firebaseUser.photoURL || '',
+            lastLogin: serverTimestamp(),
+          }),
+          { merge: true }
+        ).catch((err) => {
+          console.warn('Could not sync user profile:', err);
+        });
       } else {
         setUser(null);
         setSettings(prev => ({ ...prev, plan: 'free' }));
@@ -313,16 +326,17 @@ export default function App() {
       };
       
       if (user) {
+        setChats(prev => [newChat as Chat, ...prev]);
+        setActiveChatId(currentChatId);
+        currentChatObj = newChat as Chat;
         try {
           await setDoc(doc(db, 'users', user.uid, 'chats', currentChatId), sanitizeForFirestore(newChat));
-          setActiveChatId(currentChatId);
-          currentChatObj = newChat as Chat;
         } catch (err) {
           handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/chats/${currentChatId}`);
           return;
         }
       } else {
-        setGuestChats([newChat, ...guestChats]);
+        setGuestChats(prev => [newChat as Chat, ...prev]);
         setActiveChatId(currentChatId);
         currentChatObj = newChat as Chat;
       }
@@ -340,8 +354,25 @@ export default function App() {
     const chatTitle = currentChatObj?.title && currentChatObj.title !== 'Nouveau Chat' 
       ? currentChatObj.title 
       : (content.slice(0, 30) + (content.length > 30 ? '...' : ''));
-    
+
+    const updateLocalMessages = (chatId: string, messagesList: Message[], titleStr?: string) => {
+      if (user) {
+        setChats(prev => prev.map(c =>
+          c.id === chatId
+            ? { ...c, messages: messagesList, ...(titleStr ? { title: titleStr } : {}) }
+            : c
+        ));
+      } else {
+        setGuestChats(prev => prev.map(c =>
+          c.id === chatId
+            ? { ...c, messages: messagesList, ...(titleStr ? { title: titleStr } : {}) }
+            : c
+        ));
+      }
+    };
+
     const saveChatState = async (chatId: string, messagesList: Message[], titleStr?: string) => {
+      updateLocalMessages(chatId, messagesList, titleStr);
       if (user) {
         try {
           const payload: any = {
@@ -356,68 +387,86 @@ export default function App() {
           console.error("Failed to sync chat to Firestore:", err);
           // If size limit or transient error, keep local state intact
         }
-      } else {
-        setGuestChats(prev => prev.map(c => 
-          c.id === chatId 
-            ? { ...c, messages: messagesList, ...(titleStr ? { title: titleStr } : {}) } 
-            : c
-        ));
       }
     };
 
-    await saveChatState(currentChatId, updatedMessages, chatTitle);
+    // Detect direct media generation intents BEFORE setting loading so the right loader renders on frame 1
+    const trimmedPrompt = content.trim();
+    const normalizedPrompt = trimmedPrompt.replace(/[\u2018\u2019]/g, "'");
+    const isDirectVideoRequest =
+      /(g[eéèê]n[eéèê]r|cr[eéèê]|fai[st]|faire|produi|r[eé]alis|generat|creat|make|anim).*(vid[eé]o|clip|film|reel|animation)/i.test(normalizedPrompt) ||
+      /^(une?\s+)?(vid[eé]o|clip)\s+(de|d'|du|sur|pour|about|of)/i.test(normalizedPrompt) ||
+      normalizedPrompt.toLowerCase().startsWith('/video');
+
+    const effectivePlan: UserPlan = settings.plan || 'free';
+    const hasProVideoAccess = hasPlanAccess(effectivePlan, 'pro');
+
+    const hasImageAttachment = attachments && attachments.some(a => a.mimeType?.startsWith('image/') || a.type?.startsWith('image/'));
+    const isCreatorPhotoQuery = /(tchoumi|vitrice|cr[eé]ateur|fondateur)/i.test(normalizedPrompt);
+    const isQuestionAboutImages = /^(comment\s+(g[eéèê]n[eéèê]r|cr[eéèê]|fai)|pourquoi|explique|qu'est-ce|c'est quoi|tutoriel)/i.test(normalizedPrompt);
+
+    const isDirectImageRequest =
+      !isDirectVideoRequest &&
+      !hasImageAttachment &&
+      !isCreatorPhotoQuery &&
+      !isQuestionAboutImages && (
+        normalizedPrompt.toLowerCase().startsWith('/image') ||
+        normalizedPrompt.toLowerCase().startsWith('/imagine') ||
+        /(g[eéèê]n[eéèê]r|cr[eéèê]|dessin|pein|illustr|fai[st]|faire|produi|r[eé]alis|rend|montr|donn|imagin|veux|souhait|draw|paint|generat|creat|make|design|show).*(image|dessin|illustration|visuel|portrait|photo|tableau d'art|peinture|picture|artwork|avatar|logo|affiche|poster|banni[eè]re|wallpaper|fond d'[eé]cran)/i.test(normalizedPrompt) ||
+        /^(dessine|peins|illustre)(-moi|-nous)?\s+/i.test(normalizedPrompt) ||
+        /^(une?\s+)?(image|photo|dessin|illustration|portrait|logo|affiche|wallpaper|fond d'[eé]cran)\s+(de|d'|du|des|d'un|d'une|pour|sur|avec|about|of)/i.test(normalizedPrompt)
+      );
+
+    const assistantMessageId = generateId();
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      ...(isDirectImageRequest
+        ? { mediaGenerating: 'image' as const, mediaProgress: 4 }
+        : isDirectVideoRequest && hasProVideoAccess
+          ? { mediaGenerating: 'video' as const, mediaProgress: 4 }
+          : {}),
+    };
 
     setIsLoading(true);
     setError(null);
     abortControllerRef.current = new AbortController();
 
-    const assistantMessageId = generateId();
-    let assistantMessage: Message = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-    };
-
-    // Add empty assistant message for streaming
-    await saveChatState(currentChatId, [...updatedMessages, assistantMessage]);
+    // Update UI immediately with the assistant placeholder (halftone loader if image/video) and sync to Firestore
+    await saveChatState(currentChatId, [...updatedMessages, assistantMessage], chatTitle);
 
     let latestStreamedText = "";
     let latestStreamedThoughts = "";
+
+    const updateMediaProgress = (pct: number) => {
+      updateLocalMessages(currentChatId!, [
+        ...updatedMessages,
+        {
+          ...assistantMessage,
+          mediaGenerating: 'image',
+          mediaProgress: pct,
+        },
+      ]);
+    };
 
     try {
       let responseContent = "";
       let responseThoughts = "";
 
-      // Check for video generation request (Pro & Ultra exclusive)
-      const isDirectVideoRequest =
-        /(g[eé]n[eé]r|cr[eé]|fai[st]|produi|r[eé]alis|generat|creat|make).*(vid[eé]o|clip|film|reel|animation)/i.test(content) ||
-        /^(vid[eé]o|clip)\s+(de|d'|du|sur|pour|about|of)/i.test(content.trim()) ||
-        content.toLowerCase().startsWith('/video');
-
-      const effectivePlan: UserPlan = settings.plan || 'free';
-      const hasProVideoAccess = hasPlanAccess(effectivePlan, 'pro');
-
-      // Check for direct image generation request without attached images
-      const hasImageAttachment = attachments && attachments.some(a => a.mimeType?.startsWith('image/') || a.type?.startsWith('image/'));
-      const isDirectImageRequest =
-        !isDirectVideoRequest &&
-        !hasImageAttachment && (
-          /(g[eé]n[eé]r|cr[eé]|dessin|pein|illustr|fai[st]|produi|rend|draw|generat|creat|make).*(image|dessin|illustration|visuel|portrait|photo|tableau d'art|picture|artwork|avatar)/i.test(content) ||
-          /^(image|photo|dessin|illustration|portrait)\s+(de|d'|du|des|d'un|d'une|pour|sur)/i.test(content.trim()) ||
-          content.toLowerCase().startsWith('/image') ||
-          content.toLowerCase().startsWith('/imagine')
-        );
-
       if (isDirectVideoRequest && !hasProVideoAccess) {
         responseContent =
           settings.language === 'en'
-            ? `🎬 **AI Video Generation is reserved for Pro & Ultra plans**\n\nYour current plan (**${effectivePlan.toUpperCase()}**) does not include AI Video Generation.\n\n- **Plan Pro (12,559 FCFA / year)** : Unlocks **Tchoumi Titan** & AI Video Studio\n- **Plan Ultra (29,900 FCFA / year)** : Unlocks **Tchoumi Sovereign** & Priority HD Video\n\nClick **Upgrade** in the modal that just opened (or go to **Settings > Account & Plan**) to activate your Pro access with the Founder.`
-            : `🎬 **La génération de vidéo IA est réservée aux formules Pro et Ultra**\n\nVotre formule actuelle (**${effectivePlan.toUpperCase()}**) n'inclut pas encore la création de vidéo.\n\n- **Plan Pro (12 559 FCFA / an)** : Débloque **Tchoumi Titan** & la Génération de Vidéo IA\n- **Plan Ultra (29 900 FCFA / an)** : Débloque **Tchoumi Sovereign** & la Vidéo HD prioritaire\n\nValidez votre passage au **Plan Pro** dans la fenêtre qui vient de s'ouvrir (ou dans **Paramètres > Compte & Abonnement**) pour débloquer cette fonctionnalité.`;
+            ? `🎬 **AI Video Generation is reserved for Pro & Ultra plans**\n\nYour current plan (**${effectivePlan.toUpperCase()}**) does not include AI Video Generation.\n\n- **Plan Pro (12,559 FCFA / month)** : Unlocks **Tchoumi Titan** & AI Video Studio\n- **Plan Ultra (29,900 FCFA / month)** : Unlocks **Tchoumi Sovereign** & Priority HD Video\n\nClick **Upgrade** in the modal that just opened (or go to **Settings > Account & Plan**) to activate your Pro access with the Founder.`
+            : `🎬 **La génération de vidéo IA est réservée aux formules Pro et Ultra**\n\nVotre formule actuelle (**${effectivePlan.toUpperCase()}**) n'inclut pas encore la création de vidéo.\n\n- **Plan Pro (12 559 FCFA / mois)** : Débloque **Tchoumi Titan** & la Génération de Vidéo IA\n- **Plan Ultra (29 900 FCFA / mois)** : Débloque **Tchoumi Sovereign** & la Vidéo HD prioritaire\n\nValidez votre passage au **Plan Pro** dans la fenêtre qui vient de s'ouvrir (ou dans **Paramètres > Compte & Abonnement**) pour débloquer cette fonctionnalité.`;
         assistantMessage.content = responseContent;
         setRequestedUpgradePlan('pro');
       } else if (isDirectImageRequest) {
-        responseContent = await generateImage(content);
+        responseContent = await generateImage(content, {
+          signal: abortControllerRef.current?.signal,
+          onProgress: updateMediaProgress,
+        });
         assistantMessage.content = responseContent;
       } else {
         const selectedDef = getModelById(settings.selectedModel);
@@ -438,23 +487,12 @@ export default function App() {
             latestStreamedThoughts = chunkThoughts || "";
             const streamingAssistantMsg: Message = {
               ...assistantMessage,
+              mediaGenerating: undefined,
+              mediaProgress: undefined,
               content: chunkText,
               ...(chunkThoughts ? { thoughts: chunkThoughts } : {}),
             };
-            // Update local state during streaming immediately
-            if (user) {
-              setChats(prev => prev.map(c => 
-                c.id === currentChatId 
-                  ? { ...c, messages: [...updatedMessages, streamingAssistantMsg] } 
-                  : c
-              ));
-            } else {
-              setGuestChats(prev => prev.map(c => 
-                c.id === currentChatId 
-                  ? { ...c, messages: [...updatedMessages, streamingAssistantMsg] } 
-                  : c
-              ));
-            }
+            updateLocalMessages(currentChatId!, [...updatedMessages, streamingAssistantMsg]);
           },
           abortControllerRef.current?.signal,
           effectiveCustomInstructions
@@ -465,9 +503,9 @@ export default function App() {
 
         // Check if Gemini suggested an image or returned an action
         if (responseContent.includes('"action"') && (responseContent.includes('dalle') || responseContent.includes('text2im') || responseContent.includes('image'))) {
+          let promptToUse = content;
           try {
             const parsed = JSON.parse(responseContent);
-            let promptToUse = content;
             if (parsed.action_input) {
               if (typeof parsed.action_input === 'string') {
                 try {
@@ -480,12 +518,14 @@ export default function App() {
                 promptToUse = parsed.action_input.prompt;
               }
             }
-            const generatedUrl = await generateImage(promptToUse);
-            responseContent = `Voici la photo générée :\n\n![](${generatedUrl})`;
           } catch {
-            const generatedUrl = await generateImage(content);
-            responseContent = `Voici la photo générée :\n\n![](${generatedUrl})`;
+            promptToUse = content;
           }
+          updateMediaProgress(4);
+          responseContent = await generateImage(promptToUse, {
+            signal: abortControllerRef.current?.signal,
+            onProgress: updateMediaProgress,
+          });
         }
 
         assistantMessage.content = responseContent;
@@ -493,6 +533,9 @@ export default function App() {
           assistantMessage.thoughts = responseThoughts;
         }
       }
+
+      delete assistantMessage.mediaGenerating;
+      delete assistantMessage.mediaProgress;
 
       // Final update after stream or image generation
       await saveChatState(currentChatId, [...updatedMessages, assistantMessage]);
@@ -930,6 +973,8 @@ export default function App() {
           settings={settings}
           userPhotoURL={user?.photoURL}
           userEmail={user?.email}
+          userDisplayName={user?.displayName}
+          userUid={user?.uid}
           isLoggedIn={!!user}
           settingsCategory={settingsCategory}
           onSettingsCategoryChange={setSettingsCategory}

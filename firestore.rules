@@ -27,10 +27,32 @@ service cloud.firestore {
       }
     }
 
+    function isValidSubscriptionRequestCreate(requestId) {
+      let d = request.resource.data;
+      return requestId.size() >= 3 && requestId.size() <= 120
+        && d.keys().hasAll(['fullName', 'email', 'phone', 'plan', 'status', 'createdAt'])
+        && d.keys().hasOnly([
+          'id', 'fullName', 'email', 'phone', 'paymentMethod',
+          'plan', 'priceLabel', 'notes', 'status', 'uid', 'createdAt'
+        ])
+        && d.fullName is string && d.fullName.size() >= 2 && d.fullName.size() <= 120
+        && d.email is string && d.email.size() >= 5 && d.email.size() <= 160
+        && d.phone is string && d.phone.size() >= 6 && d.phone.size() <= 40
+        && d.plan in ['plus', 'pro', 'ultra']
+        && d.status == 'pending'
+        && d.createdAt is number;
+    }
+
     // Pro users registry (verified by email)
     match /pro_users/{email} {
       allow read: if isAuthenticated();
       allow create, update, delete: if isFounder();
+    }
+
+    // Subscription requests submitted by users/guests, managed by Founder
+    match /subscription_requests/{requestId} {
+      allow create: if isValidSubscriptionRequestCreate(requestId);
+      allow read, update, delete: if isFounder();
     }
 
     // Default deny

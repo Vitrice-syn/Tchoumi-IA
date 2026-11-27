@@ -15,6 +15,7 @@ import {
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataChartRenderer, ChartDataPayload } from './DataChartRenderer';
+import { MediaGenerationLoader } from './MediaGenerationLoader';
 
 interface MessageItemProps {
   message: Message;
@@ -136,10 +137,22 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   const [previewImage, setPreviewImage] = React.useState<string | null>(null);
   const [showMobileActions, setShowMobileActions] = React.useState(false);
   const [showThoughts, setShowThoughts] = React.useState(false);
+  const [mediaLoaded, setMediaLoaded] = React.useState(false);
+  const [mediaError, setMediaError] = React.useState(false);
+  const imageRef = React.useRef<HTMLImageElement>(null);
   const longPressTimerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   React.useEffect(() => {
     setEditValue(message.content);
+  }, [message.content]);
+
+  React.useEffect(() => {
+    setMediaLoaded(false);
+    setMediaError(false);
+    const img = imageRef.current;
+    if (img && img.complete && img.naturalWidth > 0) {
+      setMediaLoaded(true);
+    }
   }, [message.content]);
 
   // Stop speech when unmounted
@@ -239,18 +252,25 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     window.speechSynthesis.speak(utterance);
   };
 
-  const isImageContent = message.content.startsWith('data:image') ||
-    (message.content.startsWith('http') && (message.content.includes('pollinations.ai') || message.content.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i)));
+  const trimmedContent = message.content.trim();
+
+  const isImageContent = trimmedContent.startsWith('data:image') ||
+    trimmedContent.startsWith('/api/image/') ||
+    (trimmedContent.startsWith('http') && (trimmedContent.includes('pollinations.ai') || Boolean(trimmedContent.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i))));
+
+  const isVideoContent = trimmedContent.startsWith('data:video') ||
+    (trimmedContent.startsWith('http') && Boolean(trimmedContent.match(/\.(mp4|webm|mov)($|\?)/i)));
 
   const isErrorMessage = isAssistant && (
     message.content.toLowerCase().startsWith('erreur') ||
     message.content.toLowerCase().startsWith('error') ||
     message.content.toLowerCase().includes('quota') ||
     message.content.toLowerCase().includes('limite') ||
-    message.content.toLowerCase().includes('surchargé')
+    message.content.includes('surchargé')
   );
 
-  const isThinkingPhase = isAssistant && isStreaming && !message.content.trim();
+  const isMediaGenerating = isAssistant && Boolean(message.mediaGenerating) && !message.content.trim();
+  const isThinkingPhase = isAssistant && isStreaming && !message.content.trim() && !isMediaGenerating;
   const hasThoughts = Boolean(message.thoughts && message.thoughts.trim().length > 0);
 
   const thinkingLabels = language === 'en'
@@ -483,44 +503,124 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               </button>
             </div>
           </div>
-        ) : isImageContent ? (
-          /* Generated Image Display */
+        ) : isMediaGenerating ? (
+          /* Halftone Dot-Matrix Media Generation Loader */
           <div className="not-prose my-2">
-            <div className="relative group/img rounded-2xl overflow-hidden border border-white/10 shadow-2xl max-w-xl bg-black/60">
-              <img
-                src={message.content}
-                alt="Image générée par Tchoumi IA"
-                className="w-full h-auto object-cover max-h-[500px]"
-                referrerPolicy="no-referrer"
+            <MediaGenerationLoader
+              type={message.mediaGenerating}
+              progress={message.mediaProgress}
+            />
+          </div>
+        ) : isVideoContent ? (
+          /* Generated Video Display */
+          <div className="not-prose my-2">
+            <div className="relative w-full group/img rounded-2xl overflow-hidden border border-white/10 shadow-2xl max-w-xl bg-[#03050a]">
+              {!mediaLoaded && !mediaError && (
+                <MediaGenerationLoader type="video" className="border-0 rounded-none shadow-none" />
+              )}
+              <video
+                src={trimmedContent}
+                controls
+                autoPlay
+                loop
+                playsInline
+                onLoadedData={() => setMediaLoaded(true)}
+                onError={() => setMediaError(true)}
+                className={cn(
+                  "w-full h-auto max-h-[500px] transition-opacity duration-500",
+                  mediaLoaded ? "opacity-100" : "opacity-0 absolute inset-0 pointer-events-none"
+                )}
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover/img:opacity-100 transition-opacity flex items-end justify-between p-4">
-                <div className="flex items-center gap-2">
+              {mediaLoaded && (
+                <div className="p-3 bg-[#0c0d14] border-t border-white/10 flex items-center justify-between">
                   <span className="text-xs font-semibold text-white flex items-center gap-1.5">
-                    <Sparkles size={14} className="text-indigo-400" />
-                    Générée par Tchoumi IA
+                    <Video size={14} className="text-indigo-400" />
+                    Vidéo générée par Tchoumi IA
                   </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPreviewImage(message.content)}
-                    className="p-2 bg-white/20 hover:bg-white/30 text-white rounded-xl backdrop-blur-md transition-all shadow-lg cursor-pointer"
-                    title="Agrandir"
-                  >
-                    <Maximize2 size={14} />
-                  </button>
                   <a
-                    href={message.content}
-                    download={`tchoumi_gen_${Date.now()}.png`}
+                    href={trimmedContent}
+                    download={`tchoumi_video_${Date.now()}.mp4`}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold backdrop-blur-md transition-all shadow-lg cursor-pointer"
-                    title="Télécharger l'image"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition-all shadow-lg cursor-pointer"
                   >
-                    <Download size={14} />
-                    <span>Enregistrer</span>
+                    <Download size={13} />
+                    <span>Télécharger</span>
                   </a>
                 </div>
-              </div>
+              )}
+            </div>
+          </div>
+        ) : isImageContent ? (
+          /* Generated Image Display with Halftone Loader while fetching */
+          <div className="not-prose my-2">
+            <div className="relative w-full group/img rounded-2xl overflow-hidden border border-white/10 shadow-2xl max-w-xl bg-[#03050a]">
+              {!mediaLoaded && !mediaError && (
+                <MediaGenerationLoader type="image" className="border-0 rounded-none shadow-none" />
+              )}
+              {mediaError ? (
+                <div className="p-6 flex flex-col items-center justify-center text-center gap-3 aspect-[4/3] bg-[#070912]">
+                  <AlertCircle size={24} className="text-red-400" />
+                  <p className="text-xs text-gray-300">
+                    {language === 'en'
+                      ? 'Could not load the generated image. Please try again.'
+                      : "Impossible de charger l'image générée. Veuillez réessayer."}
+                  </p>
+                  {onRetry && (
+                    <button
+                      type="button"
+                      onClick={() => onRetry(message.id)}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+                    >
+                      <RefreshCw size={13} />
+                      <span>{thinkingLabels.regenerate}</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <img
+                  ref={imageRef}
+                  src={trimmedContent}
+                  alt="Image générée par Tchoumi IA"
+                  onLoad={() => setMediaLoaded(true)}
+                  onError={() => setMediaError(true)}
+                  className={cn(
+                    "w-full h-auto object-cover max-h-[500px] transition-opacity duration-500",
+                    mediaLoaded ? "opacity-100" : "opacity-0 absolute inset-0 pointer-events-none"
+                  )}
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              {mediaLoaded && !mediaError && (
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover/img:opacity-100 transition-opacity flex items-end justify-between p-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-indigo-400" />
+                      Générée par Tchoumi IA
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPreviewImage(trimmedContent)}
+                      className="p-2 bg-white/20 hover:bg-white/30 text-white rounded-xl backdrop-blur-md transition-all shadow-lg cursor-pointer"
+                      title="Agrandir"
+                    >
+                      <Maximize2 size={14} />
+                    </button>
+                    <a
+                      href={trimmedContent}
+                      download={`tchoumi_gen_${Date.now()}.png`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold backdrop-blur-md transition-all shadow-lg cursor-pointer"
+                      title="Télécharger l'image"
+                    >
+                      <Download size={14} />
+                      <span>Enregistrer</span>
+                    </a>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : !isAssistant ? (
@@ -787,7 +887,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             )}
 
             {/* Minimal Gemini/ChatGPT-style Icon Action Bar */}
-            {!isImageContent && !isStreaming && message.content.trim().length > 0 && (
+            {!isImageContent && !isVideoContent && !isMediaGenerating && !isStreaming && message.content.trim().length > 0 && (
               <div className="mt-2.5 flex items-center gap-1 not-prose select-none">
                 <button
                   type="button"
